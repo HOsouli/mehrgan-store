@@ -64,7 +64,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
 # Maintain OTP to verify mobile number and control expiration and failed attempts
 class OTP(models.Model):
     phone_number = models.CharField(max_length=11, validators=[mobile_validate], verbose_name="شماره موبایل")
-    code = models.CharField(max_length=6, verbose_name="کد تایید")
+    code = models.CharField(max_length=150, verbose_name="کد تایید")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="زمان ایجاد")
     expires_at = models.DateTimeField(verbose_name="زمان انقضا")
     is_used = models.BooleanField(default=False, verbose_name="استفاده شده")

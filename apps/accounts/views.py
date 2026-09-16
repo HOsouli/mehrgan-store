@@ -1,4 +1,3 @@
-from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from .serializers import(
@@ -8,7 +7,7 @@ from .services import OTPService, AuthService
 from rest_framework import status
 from drf_spectacular.utils import extend_schema, OpenApiResponse
 from rest_framework.permissions import AllowAny
-from rest_framework.permissions import IsAuthenticated
+from .throttles import OTPRequestThrottle, OTPVerifyThrottle
 
 
 @extend_schema(
@@ -24,6 +23,7 @@ from rest_framework.permissions import IsAuthenticated
 )
 class RequestOTPView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [OTPRequestThrottle]
     def post(self, request):
         serializer = RequestOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -47,6 +47,7 @@ class RequestOTPView(APIView):
 )
 class VerifyOTPView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [OTPVerifyThrottle]
     def post(self, request):
         serializer = VerifyOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

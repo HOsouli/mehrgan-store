@@ -37,7 +37,7 @@ class ProductAdmin(admin.ModelAdmin):
     filter_horizontal = ("cars",)
     inlines = (ProductImageInline,)
 
-    @admin.display(description="قیمت")
+    @admin.display(description="قیمت (ریال)")
     def formatted_price(self, obj):
         return f"{obj.price:,}"
 

@@ -15,7 +15,6 @@ class Order(models.Model):
 
     class OrderStatus(models.TextChoices):
         PENDING = "pending", "در انتظار"
-        CONFIRMED = "confirmed", "تأیید شده"
         PROCESSING = "processing", "در حال پردازش"
         SHIPPED = "shipped", "ارسال شده"
         DELIVERED = "delivered", "تحویل داده شده"
@@ -35,6 +34,7 @@ class Order(models.Model):
     shipping_amount = models.DecimalField(max_digits=12, decimal_places=0, default=0, verbose_name="هزینه ارسال")
     total_amount = models.DecimalField(max_digits=12, decimal_places=0, verbose_name="مبلغ نهایی")
     discount = models.ForeignKey(Discount, on_delete=models.SET_NULL, null=True, blank=True, related_name="orders", verbose_name="تخفیف")
+    expires_at = models.DateTimeField(verbose_name="زمان انقضای سفارش")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="تاریخ ایجاد")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="تاریخ ویرایش")
 

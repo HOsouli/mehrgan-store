@@ -18,9 +18,19 @@ class OrderAddressInline(admin.StackedInline):
 
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
-    list_display = ("order_number", "user", "status", "subtotal", "discount_amount", "shipping_amount", "total_amount", "created_at")
+    list_display = (
+        "order_number",
+        "user",
+        "status",
+        "subtotal",
+        "discount_amount",
+        "shipping_amount",
+        "total_amount",
+        "expires_at",
+        "created_at"
+    )
     search_fields = ("order_number", "user__phone_number")
-    list_filter = ("status", "created_at")
+    list_filter = ("status", "created_at", "expires_at")
     ordering = ("-created_at",)
     readonly_fields = (
         "id",
@@ -31,6 +41,7 @@ class OrderAdmin(admin.ModelAdmin):
         "shipping_amount",
         "total_amount",
         "discount",
+        "expires_at",
         "created_at",
         "updated_at",
     )

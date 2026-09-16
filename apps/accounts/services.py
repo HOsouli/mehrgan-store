@@ -13,6 +13,9 @@ from .models import CustomUser, OTP
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from django.db import transaction
+from django.contrib.auth.hashers import make_password, check_password
+from django.conf import settings
+
 
 
 class OTPService:
@@ -28,7 +31,7 @@ class OTPService:
 
         # Check whether the phone number is temporarily blocked
         if last_otp and last_otp.blocked_until and last_otp.blocked_until > now:
-            remaining_seconds = int(last_otp.blocked_until - now).total_seconds()
+            remaining_seconds = int((last_otp.blocked_until - now).total_seconds())
             raise ValidationError({
                 "phone_number": f"این شماره موقتا مسدود شده است لطفا {remaining_seconds} ثانیه دیگر تلاش کنید."
             })
@@ -45,9 +48,14 @@ class OTPService:
         # Invalidate previous active OTPs
         OTP.objects.filter(phone_number=phone_number, is_used=False).update(is_used=True)
         code = f"{secrets.randbelow(1_000_000):06d}"
-        otp = OTP.objects.create(phone_number=phone_number, code=code, expires_at=now + timedelta(seconds=OTPService.OTP_EXPIRY_SECONDS))
+        if settings.DEBUG:
+            print(f"OTP for {phone_number}: {code}")
+        otp = OTP.objects.create(
+            phone_number=phone_number,
+            code=make_password(code),
+            expires_at=now + timedelta(seconds=OTPService.OTP_EXPIRY_SECONDS)
+        )
         return otp
-
 
     @staticmethod
     def verify_otp(phone_number, code):
@@ -60,7 +68,7 @@ class OTPService:
 
         # Check whether the phone number is temporarily blocked
         if otp.blocked_until and otp.blocked_until > now:
-            remaining_seconds = int(otp.blocked_until - now).total_seconds()
+            remaining_seconds = int((otp.blocked_until - now).total_seconds())
             raise ValidationError({
                 "code": f"این شماره موقتا مسدود شده است لطفا {remaining_seconds} ثانیه دیگر تلاش کنید."
             })
@@ -72,7 +80,7 @@ class OTPService:
             })
 
         # Check whether the entered code is correct
-        if code != otp.code:
+        if not check_password(code, otp.code):
             otp.attempts += 1
             if otp.attempts >= OTPService.MAX_ATTEMPTS:
                 otp.blocked_until = now + timedelta(seconds=OTPService.BLOCK_DURATION_SECONDS)
