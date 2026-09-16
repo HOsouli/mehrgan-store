@@ -18,7 +18,7 @@ class Discount(models.Model):
         BRAND = "brand", "برند"
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False, verbose_name="شناسه")
-    code = models.CharField(max_length=10, unique=True, verbose_name="کد تخفیف")
+    code = models.CharField(max_length=10, unique=True, blank=True, null=True, verbose_name="کد تخفیف")
     discount_type = models.CharField(max_length=20, choices=DiscountType.choices, verbose_name="نوع تخفیف")
     value = models.DecimalField(max_digits=12, decimal_places=0, verbose_name="مقدار تخفیف")
     target_type = models.CharField(max_length=20, choices=TargetType.choices, verbose_name="محدوده تخفیف")
@@ -63,7 +63,7 @@ class Discount(models.Model):
             })
 
     def save(self, *args, **kwargs):
-        self.code = self.code.strip().upper()
+        self.code = self.code.strip().upper() if self.code else None
         self.full_clean()
         super().save(*args, **kwargs)
 

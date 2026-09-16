@@ -58,7 +58,7 @@ class Car(models.Model):
 
 class Product(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False, verbose_name="شناسه")
-    name = models.CharField(max_length=100, unique=True, verbose_name="نام محصول")
+    name = models.CharField(max_length=100, verbose_name="نام محصول")
     slug = models.SlugField(max_length=200, unique=True, blank=True, verbose_name="شناسه متنی")
     description = models.TextField(blank=True, verbose_name="توضیحات")
     price = models.DecimalField(max_digits=12, decimal_places=0, verbose_name="قیمت(ریال)")
@@ -99,6 +99,7 @@ class ProductImage(models.Model):
     class Meta:
         verbose_name = "تصویر محصول"
         verbose_name_plural = "تصاویر محصولات"
+        ordering = ("created_at",)
 
     def __str__(self):
         return f"تصویر {self.product.name}"

@@ -31,6 +31,7 @@ class AddCartView(APIView):
 
 class CartItemView(APIView):
 
+    @extend_schema(request=CartItemUpdateSerializer, responses=CartItemSerializer)
     def patch(self, request, item_id):
         serializer = CartItemUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

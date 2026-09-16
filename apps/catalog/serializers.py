@@ -44,10 +44,10 @@ class ProductListSerializer(serializers.ModelSerializer):
         return obj.stock > 0
 
     def get_img(self, obj):
-        image = obj.images.first()
-        if not image or not image.image:
+        images = list(obj.images.all())
+        if not images or not images[0].image:
             return None
-        return image.image_thumbnail.url
+        return images[0].image_thumbnail.url
 
 
 class ProductDetailSerializer(serializers.ModelSerializer):
@@ -70,7 +70,8 @@ class ProductDetailSerializer(serializers.ModelSerializer):
         return obj.stock > 0
 
     def get_img(self, obj):
-        image = obj.images.first()
-        if not image or not image.image:
+        images = list(obj.images.all())
+        if not images or not images[0].image:
             return None
-        return image.image_thumbnail.url
+        return images[0].image_thumbnail.url
+

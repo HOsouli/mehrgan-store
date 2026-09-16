@@ -46,7 +46,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     phone_number = models.CharField(max_length=11, unique=True, validators=[mobile_validate], verbose_name="شماره موبایل")
     is_active = models.BooleanField(default=True, verbose_name="فعال")
     is_verified = models.BooleanField(default=False, verbose_name="تأیید شده")
-    is_staff = models.BooleanField(default=False)
+    is_staff = models.BooleanField(default=False, verbose_name="دسترسی ادمین")
     date_joined = models.DateTimeField(auto_now_add=True, verbose_name="تاریخ عضویت")
 
     objects = CustomUserManager()
