@@ -25,6 +25,7 @@ class Discount(models.Model):
     products = models.ManyToManyField(Product, blank=True, related_name="discounts", verbose_name="محصولات")
     categories = models.ManyToManyField(Category, blank=True, related_name="discounts", verbose_name="دسته‌بندی‌ها")
     brands = models.ManyToManyField(Brand, blank=True, related_name="discounts", verbose_name="برندها")
+    eligible_users = models.ManyToManyField(CustomUser, blank=True, related_name="discounts", verbose_name="کاربران مجاز")
     minimum_order_amount = models.DecimalField(max_digits=12, decimal_places=0, blank=True, null=True, verbose_name="حداقل مبلغ کل سبد")
     total_usage_limit = models.PositiveIntegerField(blank=True, null=True, verbose_name="سقف استفاده کل")
     per_user_limit = models.PositiveIntegerField(blank=True, null=True, verbose_name="سقف استفاده هر کاربر")
@@ -73,7 +74,7 @@ class Discount(models.Model):
         ordering = ("-created_at",)
 
     def __str__(self):
-        return self.code
+        return self.code or "تخفیف خودکار"
 
 # __________________________________________________________
 class CouponUsage(models.Model):
@@ -94,7 +95,6 @@ class CouponUsage(models.Model):
 
     def __str__(self):
         return f"{self.user.phone_number} - {self.discount.code}"
-
 
 
 

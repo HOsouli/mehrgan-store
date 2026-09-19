@@ -13,7 +13,7 @@ class OrderAddressInline(admin.StackedInline):
     model = OrderAddress
     extra = 0
     max_num = 1
-    readonly_fields = ("province", "city", "address", "postal_code", "recipient_phone", "created_at")
+    readonly_fields = ("recipient_name", "province", "city", "address", "postal_code", "recipient_phone", "created_at")
 
 
 @admin.register(Order)

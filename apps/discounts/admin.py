@@ -21,7 +21,7 @@ class DiscountAdmin(admin.ModelAdmin):
     list_filter = ("discount_type", "target_type", "is_active")
     ordering = ("-created_at",)
     readonly_fields = ("id", "created_at", "updated_at")
-    filter_horizontal = ("products", "categories", "brands")
+    filter_horizontal = ("products", "categories", "brands", "eligible_users")
 
 
 @admin.register(CouponUsage)
