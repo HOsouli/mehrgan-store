@@ -8,7 +8,5 @@ class ShipmentAdmin(admin.ModelAdmin):
     search_fields = ("order__order_number", "tracking_code", "carrier")
     list_filter = ("method", "status", "carrier", "created_at")
     ordering = ("-created_at",)
-    readonly_fields = (
-        "id", "order", "method", "carrier", "tracking_code", "shipping_cost", "status",
-        "shipped_at", "delivered_at", "created_at", "updated_at",
-    )
+    readonly_fields = ("id", "created_at", "updated_at")
+

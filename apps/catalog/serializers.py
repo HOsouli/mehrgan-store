@@ -47,7 +47,11 @@ class ProductListSerializer(serializers.ModelSerializer):
         images = list(obj.images.all())
         if not images or not images[0].image:
             return None
-        return images[0].image_thumbnail.url
+        request = self.context.get("request")
+        url = images[0].image_thumbnail.url
+        if request:
+            return request.build_absolute_uri(url)
+        return url
 
 
 class ProductDetailSerializer(serializers.ModelSerializer):
@@ -73,5 +77,9 @@ class ProductDetailSerializer(serializers.ModelSerializer):
         images = list(obj.images.all())
         if not images or not images[0].image:
             return None
-        return images[0].image_thumbnail.url
+        request = self.context.get("request")
+        url = images[0].image_thumbnail.url
+        if request:
+            return request.build_absolute_uri(url)
+        return url
 

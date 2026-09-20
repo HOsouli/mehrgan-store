@@ -26,7 +26,7 @@ if not DEBUG:
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*"]
 # ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "").split(",") # For production
 
 # Application definition
@@ -69,7 +69,8 @@ MIDDLEWARE = [
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
-    "http://100.x.x.x:5173",   # Using the Tailscale real IP for the frontend system and after test with Tailscale remove these two lines
+    "http://100.107.24.24:5173",   # Using the Tailscale real IP for the frontend system and after test with Tailscale remove these two lines
+    "http://127.0.0.1:5500",
     "https://mehregan-pakhsh.vercel.app",
 ]
 

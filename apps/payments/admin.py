@@ -8,6 +8,19 @@ class PaymentAdmin(admin.ModelAdmin):
     search_fields = ("order__order_number", "transaction_id", "tracking_code")
     list_filter = ("status", "gateway", "created_at")
     ordering = ("-created_at",)
-    readonly_fields = ("id", "order", "amount", "status", "gateway", "transaction_id", "tracking_code", "paid_at", "created_at", "updated_at")
+    readonly_fields = (
+        "id",
+        "order",
+        "amount",
+        "status",
+        "gateway",
+        "transaction_id",
+        "tracking_code",
+        "paid_at",
+        "created_at",
+        "updated_at",
+        "gateway_response_code",
+        "gateway_response_message"
+    )
 
 
