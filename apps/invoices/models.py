@@ -58,7 +58,6 @@ class Invoice(models.Model):
         return str(self.invoice_number)
 
 
-
 class InvoiceItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False, verbose_name="شناسه")
     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name="items", verbose_name="فاکتور")

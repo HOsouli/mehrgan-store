@@ -21,7 +21,7 @@ class Shipment(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False, verbose_name="شناسه")
     order = models.OneToOneField(Order, on_delete=models.PROTECT, related_name="shipment", verbose_name="سفارش")
     method = models.CharField(max_length=20, choices=ShipmentMethod.choices, verbose_name="روش ارسال")
-    carrier = models.CharField(max_length=100, verbose_name="شرکت/سرویس حمل")
+    carrier = models.CharField(max_length=100, blank=True, verbose_name="شرکت/سرویس حمل")
     tracking_code = models.CharField(max_length=100, blank=True, verbose_name="کد رهگیری")
     shipping_cost = models.DecimalField(max_digits=12, decimal_places=0, verbose_name="هزینه ارسال")
     status = models.CharField(max_length=20, choices=ShipmentStatus.choices, default=ShipmentStatus.PENDING, verbose_name="وضعیت ارسال")
@@ -61,5 +61,5 @@ class Shipment(models.Model):
         ordering = ("-created_at",)
 
     def __str__(self):
-        return f"شمارش سفارش: {self.order.order_number} - {self.get_status_display()}"
+        return f"شماره سفارش: {self.order.order_number} - {self.get_status_display()}"
 
