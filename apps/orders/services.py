@@ -5,6 +5,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 from apps.catalog.models import Product
 from apps.discounts.models import Discount, CouponUsage
+from apps.payments.models import Payment
 from .models import Order, OrderItem, OrderAddress
 
 
@@ -24,26 +25,21 @@ class OrderService:
     def _apply_order_discount(line_items, discount_amount, subtotal):
         if not subtotal or not discount_amount:
             return
-
         raw_discounts = []
         allocated = Decimal("0")
-
         for line in line_items:
             raw_discount = discount_amount * line["item_total"] / subtotal
             base_discount = raw_discount.quantize(Decimal("1"), rounding=ROUND_DOWN)
             raw_discounts.append({"line": line, "raw": raw_discount, "discount": base_discount})
             allocated += base_discount
-
         remaining = int(discount_amount - allocated)
         raw_discounts.sort(key=lambda item: item["raw"] - item["discount"], reverse=True)
-
         for item in raw_discounts:
             if remaining <= 0:
                 break
             if item["discount"] < item["line"]["item_total"]:
                 item["discount"] += Decimal("1")
                 remaining -= 1
-
         for item in raw_discounts:
             line = item["line"]
             line_discount = min(item["discount"], line["item_total"])
@@ -54,18 +50,19 @@ class OrderService:
     @transaction.atomic
     def create_order(user, validated_data):
         items_data = validated_data["items"]
+        merged_items = {}
+        for item in items_data:
+            pid = str(item["product_id"])
+            merged_items[pid] = merged_items.get(pid, 0) + item["quantity"]
         product_ids = [item["product_id"] for item in items_data]
         products = Product.objects.select_related("category", "brand").select_for_update().filter(id__in=product_ids)
         products_map = {str(p.id): p for p in products}
-
-        if len(products_map) != len(set(product_ids)):
+        if len(products_map) != len(merged_items):
             raise ValidationError("یک یا چند محصول یافت نشد.")
-
         subtotal = Decimal("0")
         line_items = []
-        for item in items_data:
-            product = products_map[str(item["product_id"])]
-            quantity = item["quantity"]
+        for pid, quantity in merged_items.items():
+            product = products_map[pid]
             if product.stock < quantity:
                 raise ValidationError(f"موجودی محصول «{product.name}» کافی نیست.")
             unit_price = product.price
@@ -79,17 +76,14 @@ class OrderService:
                 "discount_amount": Decimal("0"),
                 "total_price": item_total,
             })
-
         discount_code = validated_data.get("discount_code", "").strip().upper()
         discount = None
         discount_amount = Decimal("0")
-
         if discount_code:
             try:
                 discount = Discount.objects.select_for_update().get(code=discount_code)
             except Discount.DoesNotExist:
                 raise ValidationError("کد تخفیف معتبر نیست.")
-
             now = timezone.now()
             if not discount.is_active:
                 raise ValidationError("کد تخفیف فعال نیست.")
@@ -103,7 +97,6 @@ class OrderService:
                 raise ValidationError("سقف استفاده از این کد تخفیف تکمیل شده است.")
             if discount.per_user_limit is not None and discount.usages.filter(user=user).count() >= discount.per_user_limit:
                 raise ValidationError("سقف استفاده شما از این کد تخفیف تکمیل شده است.")
-
             if discount.target_type == Discount.TargetType.PRODUCT:
                 eligible_ids = set(discount.products.values_list("id", flat=True))
                 for line in line_items:
@@ -112,7 +105,6 @@ class OrderService:
                         line["discount_amount"] = line_discount
                         line["total_price"] = line["item_total"] - line_discount
                         discount_amount += line_discount
-
             elif discount.target_type == Discount.TargetType.CATEGORY:
                 eligible_ids = set(discount.categories.values_list("id", flat=True))
                 for line in line_items:
@@ -121,7 +113,6 @@ class OrderService:
                         line["discount_amount"] = line_discount
                         line["total_price"] = line["item_total"] - line_discount
                         discount_amount += line_discount
-
             elif discount.target_type == Discount.TargetType.BRAND:
                 eligible_ids = set(discount.brands.values_list("id", flat=True))
                 for line in line_items:
@@ -130,17 +121,13 @@ class OrderService:
                         line["discount_amount"] = line_discount
                         line["total_price"] = line["item_total"] - line_discount
                         discount_amount += line_discount
-
             elif discount.target_type == Discount.TargetType.ORDER:
                 order_discount = min(OrderService._calc_amount(discount, subtotal), subtotal)
                 discount_amount = order_discount
                 OrderService._apply_order_discount(line_items, order_discount, subtotal)
-
             discount_amount = min(discount_amount, subtotal)
-
         shipping_amount = Decimal("0")
         total_amount = subtotal - discount_amount + shipping_amount
-
         order = Order.objects.create(
             user=user,
             subtotal=subtotal,
@@ -150,7 +137,6 @@ class OrderService:
             discount=discount,
             expires_at=timezone.now() + timedelta(minutes=30),
         )
-
         for line in line_items:
             OrderItem.objects.create(
                 order=order,
@@ -162,7 +148,6 @@ class OrderService:
             )
             line["product"].stock -= line["quantity"]
             line["product"].save(update_fields=["stock"])
-
         OrderAddress.objects.create(
             order=order,
             recipient_name=validated_data["recipient_name"],
@@ -172,8 +157,35 @@ class OrderService:
             postal_code=validated_data["postal_code"],
             recipient_phone=validated_data["recipient_phone"],
         )
-
         if discount:
             CouponUsage.objects.create(user=user, discount=discount, order=order)
-
         return order
+
+    @staticmethod
+    def cancel_expired_orders(batch_size=200):
+        now = timezone.now()
+        expired_ids = list(
+            Order.objects.filter(status=Order.OrderStatus.PENDING, expires_at__lt=now).order_by("expires_at")
+            .values_list("id", flat=True)[:batch_size]
+        )
+        cancelled_count = 0
+        for order_id in expired_ids:
+            with transaction.atomic():
+                order = Order.objects.select_for_update(skip_locked=True).get(id=order_id)
+
+                # The order status may have changed between the time it was located and the time the lock was acquired.
+                if order.status != Order.OrderStatus.PENDING or order.expires_at >= timezone.now():
+                    continue
+
+                # If the payment is successful, the order must not be cancelled.
+                if order.payments.filter(status=Payment.PaymentStatus.SUCCESS).exists():
+                    continue
+                for item in order.items.all():
+                    product = Product.objects.select_for_update().get(id=item.product_id)
+                    product.stock += item.quantity
+                    product.save(update_fields=["stock"])
+                order.status = Order.OrderStatus.CANCELLED
+                order.save(update_fields=["status", "updated_at"])
+                cancelled_count += 1
+        return cancelled_count
+

@@ -6,6 +6,8 @@ from apps.catalog.models import Product
 from apps.discounts.models import Discount
 from django.core.validators import MinValueValidator, RegexValidator
 from django.db.models.expressions import RawSQL
+from django.db.models import Q
+
 
 
 postal_code_validator = RegexValidator(regex=r"^\d{10}$", message="کد پستی باید دقیقاً ده رقم باشد.")
@@ -61,6 +63,13 @@ class Order(models.Model):
         verbose_name = "سفارش"
         verbose_name_plural = "سفارش‌ها"
         ordering = ("-created_at",)
+        indexes = [
+            models.Index(
+                fields=["expires_at"],
+                name="orders_pending_expires_idx",
+                condition=models.Q(status="pending"),
+            ),
+        ]
 
     def __str__(self):
         return str(self.order_number)

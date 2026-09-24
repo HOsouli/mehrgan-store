@@ -113,7 +113,7 @@ class ZarinpalService:
                 defaults={
                     "method": Shipment.ShipmentMethod.OTHER,
                     "carrier": "",
-                    "shipping_cost": 0,
+                    "shipping_cost": order.shipping_amount,
                     "status": Shipment.ShipmentStatus.PENDING,
                 },
             )

@@ -7,7 +7,7 @@ from .services import OTPService, AuthService
 from rest_framework import status
 from drf_spectacular.utils import extend_schema, OpenApiResponse
 from rest_framework.permissions import AllowAny
-from .throttles import OTPRequestThrottle, OTPVerifyThrottle
+from .throttles import OTPRequestThrottle, OTPRequestIPThrottle, OTPVerifyThrottle, OTPVerifyIPThrottle
 
 
 @extend_schema(
@@ -23,7 +23,7 @@ from .throttles import OTPRequestThrottle, OTPVerifyThrottle
 )
 class RequestOTPView(APIView):
     permission_classes = [AllowAny]
-    throttle_classes = [OTPRequestThrottle]
+    throttle_classes = [OTPRequestThrottle, OTPRequestIPThrottle]
     def post(self, request):
         serializer = RequestOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -47,7 +47,7 @@ class RequestOTPView(APIView):
 )
 class VerifyOTPView(APIView):
     permission_classes = [AllowAny]
-    throttle_classes = [OTPVerifyThrottle]
+    throttle_classes = [OTPVerifyThrottle, OTPVerifyIPThrottle]
     def post(self, request):
         serializer = VerifyOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

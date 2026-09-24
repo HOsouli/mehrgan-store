@@ -1,7 +1,13 @@
 venv/
+.venv/
 __pycache__/
+pycache/
 *.pyc
+*.pyo
 .env
 .idea/
 .vscode/
 CACHE/
+media/
+staticfiles/
+.git/

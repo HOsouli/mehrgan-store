@@ -72,14 +72,14 @@ class Product(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.slug:
-            base_slug = slugify(self.name, allow_unicode=True)
-            slug = base_slug
-            n = 1
-            while Product.objects.filter(slug=slug).exclude(pk=self.pk).exists():
-                slug = f"{base_slug}-{n}"
-                n += 1
-            self.slug = slug
+            base = slugify(self.name, allow_unicode=True)
+            self.slug = base
+            counter = 1
+            while Product.objects.filter(slug=self.slug).exclude(pk=self.pk).exists():
+                self.slug = f"{base}-{counter}"
+                counter += 1
         super().save(*args, **kwargs)
+
 
     class Meta:
         verbose_name="محصول"

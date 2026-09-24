@@ -80,6 +80,10 @@ class OTP(models.Model):
     class Meta:
         verbose_name = "کد تأیید (OTP)"
         verbose_name_plural = "کدهای تأیید (OTP)"
+        indexes = [
+            models.Index(fields=["phone_number", "-created_at"]),
+            models.Index(fields=["phone_number", "is_used"]),
+        ]
 
     def __str__(self):
         return f"{self.phone_number} - {self.created_at}"

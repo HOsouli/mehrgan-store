@@ -1,18 +1,62 @@
 from rest_framework.throttling import SimpleRateThrottle
 
 
-class OTPRequestThrottle(SimpleRateThrottle):
+class PhoneBasedThrottle(SimpleRateThrottle):
+
+    def get_phone_number(self, request):
+        data = getattr(request, "data", None)
+
+        if isinstance(data, dict):
+            phone = data.get("phone_number")
+
+            if isinstance(phone, str) and phone.strip():
+                return phone.strip()
+
+        return None
+
+    def get_cache_key(self, request, view):
+        phone = self.get_phone_number(request)
+
+        if phone is None:
+            return self.cache_format % {
+                "scope": self.scope,
+                "ident": f"invalid:{self.get_ident(request)}",
+            }
+
+        return self.cache_format % {
+            "scope": self.scope,
+            "ident": f"phone:{phone}",
+        }
+
+
+class IPBasedThrottle(SimpleRateThrottle):
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {
+            "scope": self.scope,
+            "ident": self.get_ident(request),
+        }
+
+
+class OTPRequestThrottle(PhoneBasedThrottle):
+    """OTP request — limit per mobile number."""
     scope = "otp_request"
 
-    def get_cache_key(self, request, view):
-        return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
+
+class OTPRequestIPThrottle(IPBasedThrottle):
+    """OTP request — secondary limit per IP address."""
+    scope = "otp_request_ip"
 
 
-class OTPVerifyThrottle(SimpleRateThrottle):
+class OTPVerifyThrottle(PhoneBasedThrottle):
+    """OTP verification — limit per mobile number."""
     scope = "otp_verify"
 
-    def get_cache_key(self, request, view):
-        return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
+
+class OTPVerifyIPThrottle(IPBasedThrottle):
+    """OTP verification — secondary limit per IP address."""
+    scope = "otp_verify_ip"
+
 
 
 

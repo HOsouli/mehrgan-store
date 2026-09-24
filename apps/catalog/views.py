@@ -12,7 +12,7 @@ class ProductPagination(PageNumberPagination):
 
 class ProductListView(ListAPIView):
     permission_classes = [AllowAny]
-    queryset = Product.objects.select_related("category", "brand").prefetch_related("cars", "images")
+    queryset = Product.objects.select_related("category", "brand").prefetch_related("cars", "images").order_by("-created_at")
     serializer_class = ProductListSerializer
     pagination_class = ProductPagination
     filter_backends = [SearchFilter]
