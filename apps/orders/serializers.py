@@ -27,7 +27,10 @@ class OrderCreateSerializer(serializers.Serializer):
 class OrderListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Order
-        fields = ["id", "order_number", "status", "subtotal", "discount_amount", "shipping_amount", "total_amount", "expires_at", "created_at"]
+        fields = [
+            "id", "order_number", "status", "subtotal", "discount_amount", "shipping_amount",
+            "total_amount", "expires_at", "created_at", "delivery_date"
+            ]
 
 
 class OrderItemDetailSerializer(serializers.ModelSerializer):
@@ -53,6 +56,6 @@ class OrderDetailSerializer(serializers.ModelSerializer):
         fields = [
             "id", "order_number", "status", "subtotal", "discount_amount",
             "shipping_amount", "total_amount", "expires_at", "created_at",
-            "address", "items",
+            "delivery_date", "address", "items",
         ]
 

@@ -26,6 +26,7 @@ class OrderAdmin(admin.ModelAdmin):
         "discount_amount",
         "shipping_amount",
         "total_amount",
+        "delivery_date",
         "expires_at",
         "created_at"
     )

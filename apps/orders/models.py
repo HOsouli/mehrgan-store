@@ -35,6 +35,7 @@ class Order(models.Model):
     discount_amount = models.DecimalField(max_digits=12, decimal_places=0, default=0, verbose_name="مبلغ تخفیف")
     shipping_amount = models.DecimalField(max_digits=12, decimal_places=0, default=0, verbose_name="هزینه ارسال")
     total_amount = models.DecimalField(max_digits=12, decimal_places=0, verbose_name="مبلغ نهایی")
+    delivery_date = models.DateField(null=True, blank=True, verbose_name="تاریخ تحویل")
     discount = models.ForeignKey(Discount, on_delete=models.SET_NULL, null=True, blank=True, related_name="orders", verbose_name="تخفیف")
     expires_at = models.DateTimeField(verbose_name="زمان انقضای سفارش")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="تاریخ ایجاد")
@@ -67,7 +68,7 @@ class Order(models.Model):
             models.Index(
                 fields=["expires_at"],
                 name="orders_pending_expires_idx",
-                condition=models.Q(status="pending"),
+                condition=Q(status="pending"),
             ),
         ]
 
