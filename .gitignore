@@ -1,5 +1,6 @@
 venv/
 .venv/
+.env.production
 __pycache__/
 pycache/
 *.pyc

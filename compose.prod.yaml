@@ -1,14 +1,12 @@
+
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: mehrgan_postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
-    ports:
-      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -19,10 +17,7 @@ services:
 
   redis:
     image: redis:alpine
-    container_name: mehrgan_redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -31,11 +26,32 @@ services:
       timeout: 3s
       retries: 10
 
+  web:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - media_data:/app/media
+      - static_data:/app/staticfiles
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      gunicorn --bind 0.0.0.0:8000 --workers 3 config.wsgi
+
   celery_worker:
     build: .
-    container_name: mehrgan_celery_worker
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - .env.production
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
@@ -48,9 +64,9 @@ services:
 
   celery_beat:
     build: .
-    container_name: mehrgan_celery_beat
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - .env.production
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
@@ -61,28 +77,8 @@ services:
         condition: service_healthy
     command: celery -A config beat -l info
 
-  web:
-    build: .
-    container_name: mehrgan_web
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-    ports:
-      - "8000:8000"
-    volumes:
-      - .:/app
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    command: >
-      sh -c "python manage.py migrate --noinput &&
-            python manage.py collectstatic --noinput &&
-            gunicorn --bind 0.0.0.0:8000 --workers 3 config.wsgi"
-
 volumes:
   pgdata:
   redisdata:
+  media_data:
+  static_data:
