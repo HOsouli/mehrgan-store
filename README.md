@@ -215,6 +215,12 @@ GET /api/catalog/products/
 GET /api/catalog/products/{slug}/
 ```
 
+### Banners
+
+```text
+GET /api/banners/
+```
+
 ### Cart
 
 ```text
@@ -223,6 +229,21 @@ POST   /api/cart/items/
 PATCH  /api/cart/items/{item_id}/
 DELETE /api/cart/items/{item_id}/
 DELETE /api/cart/
+```
+
+### Discounts
+
+```text
+POST /api/discounts/apply/
+```
+
+### Addresses
+
+```text
+GET    /api/addresses/
+POST   /api/addresses/
+PATCH  /api/addresses/{id}/
+DELETE /api/addresses/{id}/
 ```
 
 ### Orders
@@ -244,6 +265,12 @@ GET  /api/payments/callback/
 
 ```text
 GET /api/shipments/{order_id}/
+```
+
+### Invoices
+
+```text
+GET /api/invoices/{order_id}/
 ```
 
 API responses use dedicated serializers for different use cases, including creation, collection, and detailed resources.
