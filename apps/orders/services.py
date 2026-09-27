@@ -7,6 +7,7 @@ from apps.catalog.models import Product
 from apps.discounts.models import Discount, CouponUsage
 from apps.payments.models import Payment
 from .models import Order, OrderItem, OrderAddress
+from django.db.models import Q
 
 
 class OrderService:
@@ -47,6 +48,52 @@ class OrderService:
             line["total_price"] = line["item_total"] - line_discount
 
     @staticmethod
+    def _get_automatic_discount(user, line_items, subtotal, now):
+        discounts = (
+            Discount.objects.select_for_update(of=("self",))
+            .filter(
+                Q(code__isnull=True) | Q(code=""),
+                is_active=True,
+                starts_at__lte=now,
+                ends_at__gte=now,
+            ).order_by("-priority", "-created_at", "-id")
+        )
+        for discount in discounts:
+            # Check eligible users
+            if discount.eligible_users.exists() and not discount.eligible_users.filter(pk=user.pk).exists():
+                continue
+
+            # Check minimum order amount
+            if discount.minimum_order_amount is not None and subtotal < discount.minimum_order_amount:
+                continue
+
+            # Check total usage limit
+            if discount.total_usage_limit is not None and discount.usages.count() >= discount.total_usage_limit:
+                continue
+
+            # Check per-user usage limit
+            if discount.per_user_limit is not None and discount.usages.filter(user=user).count() >= discount.per_user_limit:
+                continue
+
+            # Check target eligibility
+            if discount.target_type == Discount.TargetType.ORDER:
+                return discount
+            if discount.target_type == Discount.TargetType.PRODUCT:
+                eligible_ids = set(discount.products.values_list("id", flat=True))
+                if any(line["product"].id in eligible_ids for line in line_items):
+                    return discount
+            elif discount.target_type == Discount.TargetType.CATEGORY:
+                eligible_ids = set(discount.categories.values_list("id", flat=True))
+                if any(line["product"].category_id in eligible_ids for line in line_items):
+                    return discount
+            elif discount.target_type == Discount.TargetType.BRAND:
+                eligible_ids = set(discount.brands.values_list("id", flat=True))
+                if any(line["product"].brand_id in eligible_ids for line in line_items):
+                    return discount
+        return None
+
+
+    @staticmethod
     @transaction.atomic
     def create_order(user, validated_data):
         items_data = validated_data["items"]
@@ -79,24 +126,37 @@ class OrderService:
         discount_code = validated_data.get("discount_code", "").strip().upper()
         discount = None
         discount_amount = Decimal("0")
+        now = timezone.now()
         if discount_code:
             try:
                 discount = Discount.objects.select_for_update().get(code=discount_code)
             except Discount.DoesNotExist:
                 raise ValidationError("کد تخفیف معتبر نیست.")
-            now = timezone.now()
+        else:
+            discount = OrderService._get_automatic_discount(
+                user=user,
+                line_items=line_items,
+                subtotal=subtotal,
+                now=now,
+            )
+
+        # Shared logic for validation and calculation
+        if discount:
+            # Shared validation for both scenarios (code-based and automatic)
             if not discount.is_active:
-                raise ValidationError("کد تخفیف فعال نیست.")
+                raise ValidationError("تخفیف فعال نیست.")
             if now < discount.starts_at or now > discount.ends_at:
-                raise ValidationError("کد تخفیف در این بازه زمانی قابل استفاده نیست.")
+                raise ValidationError("تخفیف در این بازه زمانی قابل استفاده نیست.")
             if discount.eligible_users.exists() and not discount.eligible_users.filter(pk=user.pk).exists():
-                raise ValidationError("این کد تخفیف برای شما قابل استفاده نیست.")
+                raise ValidationError("این تخفیف برای شما قابل استفاده نیست.")
             if discount.minimum_order_amount is not None and subtotal < discount.minimum_order_amount:
                 raise ValidationError("مبلغ سفارش به حداقل مبلغ لازم برای استفاده از این تخفیف نرسیده است.")
             if discount.total_usage_limit is not None and discount.usages.count() >= discount.total_usage_limit:
-                raise ValidationError("سقف استفاده از این کد تخفیف تکمیل شده است.")
+                raise ValidationError("سقف استفاده از این تخفیف تکمیل شده است.")
             if discount.per_user_limit is not None and discount.usages.filter(user=user).count() >= discount.per_user_limit:
-                raise ValidationError("سقف استفاده شما از این کد تخفیف تکمیل شده است.")
+                raise ValidationError("سقف استفاده شما از این تخفیف تکمیل شده است.")
+
+            # Discount Calculation
             if discount.target_type == Discount.TargetType.PRODUCT:
                 eligible_ids = set(discount.products.values_list("id", flat=True))
                 for line in line_items:
@@ -125,7 +185,10 @@ class OrderService:
                 order_discount = min(OrderService._calc_amount(discount, subtotal), subtotal)
                 discount_amount = order_discount
                 OrderService._apply_order_discount(line_items, order_discount, subtotal)
+            if discount.target_type != Discount.TargetType.ORDER and discount_amount == 0:
+                raise ValidationError("این تخفیف شامل محصولات سبد خرید شما نمی‌شود.")
             discount_amount = min(discount_amount, subtotal)
+
         shipping_amount = Decimal("0")
         total_amount = subtotal - discount_amount + shipping_amount
         order = Order.objects.create(
@@ -137,6 +200,9 @@ class OrderService:
             discount=discount,
             expires_at=timezone.now() + timedelta(minutes=30),
         )
+        if discount:
+            CouponUsage.objects.create(user=user, discount=discount, order=order)
+
         for line in line_items:
             OrderItem.objects.create(
                 order=order,
@@ -157,8 +223,6 @@ class OrderService:
             postal_code=validated_data["postal_code"],
             recipient_phone=validated_data["recipient_phone"],
         )
-        if discount:
-            CouponUsage.objects.create(user=user, discount=discount, order=order)
         return order
 
     @staticmethod

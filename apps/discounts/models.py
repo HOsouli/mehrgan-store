@@ -32,6 +32,9 @@ class Discount(models.Model):
     starts_at = models.DateTimeField(verbose_name="تاریخ و زمان شروع")
     ends_at = models.DateTimeField(verbose_name="تاریخ و زمان پایان")
     is_active = models.BooleanField(default=False, verbose_name="فعال")
+    priority = models.PositiveSmallIntegerField(default=0, verbose_name="اولویت",
+        help_text="اگر چند تخفیف هم‌زمان معتبر باشند، عدد بزرگ‌تر برنده است. تخفیف‌ها با هم جمع نمی‌شوند.",
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="تاریخ ایجاد")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="تاریخ ویرایش")
 
@@ -71,7 +74,7 @@ class Discount(models.Model):
     class Meta:
         verbose_name = "تخفیف"
         verbose_name_plural = "تخفیف‌ها"
-        ordering = ("-created_at",)
+        ordering = ("-priority", "-created_at",)
 
     def __str__(self):
         return self.code or "تخفیف خودکار"
