@@ -53,7 +53,8 @@ class VerifyOTPView(APIView):
         serializer.is_valid(raise_exception=True)
         phone_number = serializer.validated_data["phone_number"]
         code = serializer.validated_data["code"]
-        tokens = OTPService.verify_otp(phone_number=phone_number, code=code)
+        guest_token = request.headers.get("X-Guest-Cart-Token")
+        tokens = OTPService.verify_otp(phone_number=phone_number, code=code, guest_token=guest_token)
         return Response(tokens, status=status.HTTP_200_OK)
 
 

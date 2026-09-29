@@ -7,6 +7,7 @@ from apps.orders.models import Order
 from apps.shipments.models import Shipment
 from .models import Payment
 from apps.invoices.models import Invoice, InvoiceItem
+from datetime import timedelta
 
 
 class ZarinpalService:
@@ -16,33 +17,45 @@ class ZarinpalService:
         return "https://sandbox.zarinpal.com" if settings.ZARINPAL_SANDBOX else "https://payment.zarinpal.com"
 
     @staticmethod
+    def _parse_response(data):
+        info = data.get("data") if isinstance(data.get("data"), dict) else {}
+        err = data.get("errors") if isinstance(data.get("errors"), dict) else {}
+        code = info.get("code", err.get("code"))
+        message = info.get("message") or err.get("message", "")
+        return info, code, str(message)[:255]
+
+    @staticmethod
     def request_payment(order):
         with transaction.atomic():
-            order = Order.objects.select_for_update().get(pk=order.pk)
+            order = Order.objects.select_for_update().select_related("address").get(pk=order.pk)
             if order.status == Order.OrderStatus.CANCELLED:
                 raise ValidationError("این سفارش لغو شده است.")
             if timezone.now() > order.expires_at:
                 raise ValidationError("مهلت این سفارش به پایان رسیده است.")
+            if order.status != Order.OrderStatus.PENDING:
+                raise ValidationError("این سفارش در وضعیت قابل پرداخت نیست.")
             if order.payments.filter(status=Payment.PaymentStatus.SUCCESS).exists():
                 raise ValidationError("این سفارش قبلاً پرداخت شده است.")
+            order.expires_at = max(order.expires_at, timezone.now() + timedelta(minutes=15))
+            order.save(update_fields=["expires_at", "updated_at"])
 
             existing_pending = order.payments.filter(status=Payment.PaymentStatus.PENDING).first()
 
             if existing_pending and existing_pending.transaction_id:
                 pay_url = f"{ZarinpalService._base_url()}/pg/StartPay/{existing_pending.transaction_id}"
                 return existing_pending, pay_url
+
             if existing_pending:
                 existing_pending.status = Payment.PaymentStatus.FAILED
                 existing_pending.gateway_response_message = "درخواست قبلی پرداخت بدون دریافت شناسه تراکنش باقی مانده بود."
                 existing_pending.save(update_fields=["status", "gateway_response_message", "updated_at"])
 
-        order = Order.objects.select_related("address").get(pk=order.pk)
-        payment = Payment.objects.create(
-            order=order,
-            amount=order.total_amount,
-            gateway="zarinpal",
-            status=Payment.PaymentStatus.PENDING,
-        )
+            payment = Payment.objects.create(
+                order=order,
+                amount=order.total_amount,
+                gateway="zarinpal",
+                status=Payment.PaymentStatus.PENDING,
+            )
         url = f"{ZarinpalService._base_url()}/pg/v4/payment/request.json"
         payload = {
             "merchant_id": settings.ZARINPAL_MERCHANT_ID,
@@ -59,15 +72,16 @@ class ZarinpalService:
             payment.save(update_fields=["gateway_response_message", "updated_at"])
             raise ValidationError("خطا در ارتباط با درگاه پرداخت. لطفاً دوباره تلاش کنید.")
 
-        payment.gateway_response_code = str(data.get("data", {}).get("code", ""))
-        payment.gateway_response_message = data.get("data", {}).get("message", "") or str(data.get("errors", ""))
+        info, code, message = ZarinpalService._parse_response(data)
+        payment.gateway_response_code = str(code or "")
+        payment.gateway_response_message = message
 
-        if data.get("data", {}).get("code") != 100:
+        if code != 100:
             payment.status = Payment.PaymentStatus.FAILED
             payment.save(update_fields=["status", "gateway_response_code", "gateway_response_message", "updated_at"])
             raise ValidationError("خطا در اتصال به درگاه پرداخت.")
 
-        authority = data["data"]["authority"]
+        authority = info["authority"]
         payment.transaction_id = authority
         payment.save(update_fields=["transaction_id", "gateway_response_code", "gateway_response_message", "updated_at"])
 
@@ -83,6 +97,10 @@ class ZarinpalService:
             raise ValidationError("پرداخت یافت نشد.")
         if payment.status == Payment.PaymentStatus.SUCCESS:
             return payment
+        if payment.order.status == Order.OrderStatus.CANCELLED:
+            raise ValidationError("این سفارش لغو شده است.")
+        if timezone.now() > payment.order.expires_at:
+            raise ValidationError("مهلت این سفارش به پایان رسیده است.")
         url = f"{ZarinpalService._base_url()}/pg/v4/payment/verify.json"
         payload = {
             "merchant_id": settings.ZARINPAL_MERCHANT_ID,
@@ -95,18 +113,19 @@ class ZarinpalService:
         except requests.exceptions.RequestException:
             raise ValidationError("خطا در ارتباط با درگاه پرداخت. لطفاً بعداً دوباره تلاش کنید.")
 
-        payment.gateway_response_code = str(data.get("data", {}).get("code", ""))
-        payment.gateway_response_message = data.get("data", {}).get("message", "") or str(data.get("errors", ""))
+        info, code, message = ZarinpalService._parse_response(data)
+        payment.gateway_response_code = str(code or "")
+        payment.gateway_response_message = message
 
-        if data.get("data", {}).get("code") in (100, 101):
+        if code in (100, 101):
             payment.status = Payment.PaymentStatus.SUCCESS
-            payment.tracking_code = str(data["data"]["ref_id"])
+            payment.tracking_code = str(info["ref_id"])
             payment.paid_at = timezone.now()
             payment.save(update_fields=["status", "tracking_code", "paid_at", "gateway_response_code", "gateway_response_message", "updated_at"])
 
             order = payment.order
             order.status = Order.OrderStatus.PROCESSING
-            order.save(update_fields=["status"])
+            order.save(update_fields=["status", "updated_at"])
 
             Shipment.objects.get_or_create(
                 order=order,
@@ -142,6 +161,5 @@ class ZarinpalService:
         else:
             payment.status = Payment.PaymentStatus.FAILED
             payment.save(update_fields=["status", "gateway_response_code", "gateway_response_message", "updated_at"])
-            raise ValidationError("تراکنش ناموفق بود.")
         return payment
 

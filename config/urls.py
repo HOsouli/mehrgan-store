@@ -13,9 +13,10 @@ urlpatterns = [
     path("api/orders/", include("apps.orders.urls", namespace="orders")),
     path("api/payments/", include("apps.payments.urls", namespace="payments")),
     path("api/shipments/", include("apps.shipments.urls", namespace="shipments")),
-    
+
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(), name="swagger-ui"),
 ]
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

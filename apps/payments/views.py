@@ -9,6 +9,12 @@ from drf_spectacular.utils import extend_schema
 from apps.orders.models import Order
 from .serializers import PaymentRequestSerializer
 from .services import ZarinpalService
+from rest_framework.exceptions import ValidationError
+import logging
+from uuid import UUID
+from .models import Payment
+
+logger = logging.getLogger(__name__)
 
 
 class PaymentRequestView(APIView):
@@ -42,14 +48,21 @@ class PaymentCallbackView(APIView):
         payment_id = request.query_params.get("payment_id")
         authority = request.query_params.get("Authority")
         gateway_status = request.query_params.get("Status")
-        frontend_result_url = f"{settings.FRONTEND_URL}/payment-result"
-        if gateway_status != "OK":
-            return redirect(f"{frontend_result_url}?status=failed&payment_id={payment_id}")
+        result_url = f"{settings.FRONTEND_URL}/payment-result"
+        failed_url = f"{result_url}?status=failed"
         try:
-            payment = ZarinpalService.verify_payment(payment_id=payment_id, authority=authority)
-        except Exception:
-            return redirect(f"{frontend_result_url}?status=failed&payment_id={payment_id}")
+            payment_uuid = UUID(payment_id)
+        except (TypeError, ValueError):
+            return redirect(failed_url)
+        if gateway_status != "OK" or not authority:
+            return redirect(f"{failed_url}&payment_id={payment_uuid}")
+        try:
+            payment = ZarinpalService.verify_payment(payment_id=payment_uuid, authority=authority)
+        except ValidationError as exc:
+            logger.warning("تأیید پرداخت %s ناموفق بود: %s", payment_uuid, exc.detail)
+            return redirect(f"{failed_url}&payment_id={payment_uuid}")
+        if payment.status != Payment.PaymentStatus.SUCCESS:
+            return redirect(f"{failed_url}&payment_id={payment_uuid}")
         return redirect(
-            f"{frontend_result_url}?status=success&order_number={payment.order.order_number}&tracking_code={payment.tracking_code}"
+            f"{result_url}?status=success&order_number={payment.order.order_number}&tracking_code={payment.tracking_code}"
         )
-

@@ -7,6 +7,7 @@ from apps.catalog.models import Product
 from apps.discounts.models import Discount, CouponUsage
 from apps.payments.models import Payment
 from .models import Order, OrderItem, OrderAddress
+from apps.cart.services import CartService
 from django.db.models import Q
 
 
@@ -223,6 +224,7 @@ class OrderService:
             postal_code=validated_data["postal_code"],
             recipient_phone=validated_data["recipient_phone"],
         )
+        CartService.clear_cart(user=user)
         return order
 
     @staticmethod
@@ -235,7 +237,10 @@ class OrderService:
         cancelled_count = 0
         for order_id in expired_ids:
             with transaction.atomic():
-                order = Order.objects.select_for_update(skip_locked=True).get(id=order_id)
+                try:
+                    order = Order.objects.select_for_update(skip_locked=True).get(id=order_id)
+                except Order.DoesNotExist:
+                    continue
 
                 # The order status may have changed between the time it was located and the time the lock was acquired.
                 if order.status != Order.OrderStatus.PENDING or order.expires_at >= timezone.now():

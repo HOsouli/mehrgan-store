@@ -5,6 +5,7 @@
 # The OTP code is never returned in the API response
 # Stricter rate limiting can be implemented later using DRF Throttling.
 
+from uuid import UUID
 import hashlib
 from django.db import connection
 import secrets
@@ -19,6 +20,7 @@ from django.contrib.auth.hashers import make_password, check_password
 from django.conf import settings
 from .tasks import send_otp_sms, deliver_otp_sms
 import logging
+from apps.cart.services import CartService
 
 
 logger = logging.getLogger(__name__)
@@ -98,56 +100,57 @@ class OTPService:
             return False
 
     @staticmethod
-    def verify_otp(phone_number, code):
+    def verify_otp(phone_number, code, guest_token=None):
         now = timezone.now()
+        wrong_code = False
+        tokens = None
         with transaction.atomic():
             OTPService._acquire_phone_lock(phone_number)
-            otp = (OTP.objects .select_for_update().filter(phone_number=phone_number, is_used=False).order_by("-created_at").first())
+            otp = (OTP.objects.select_for_update().filter(phone_number=phone_number, is_used=False).order_by("-created_at").first())
             if not otp:
-                raise ValidationError({
-                    "code": "کد تائید معتبر نیست"
-                })
-
-            # Check whether the phone number is temporarily blocked
+                raise ValidationError({"code": "کد تائید معتبر نیست"})
             if otp.blocked_until and otp.blocked_until > now:
                 remaining_seconds = int((otp.blocked_until - now).total_seconds())
                 raise ValidationError({
                     "code": f"این شماره موقتا مسدود شده است لطفا {remaining_seconds} ثانیه دیگر تلاش کنید."
                 })
-
-            # Check whether the OTP has expired
             if otp.expires_at <= now:
-                raise ValidationError({
-                    "otp": "کد تائید منقضی شده است"
-                })
+                raise ValidationError({"code": "کد تائید منقضی شده است"})
 
-            # Check whether the entered code is correct
             if not check_password(code, otp.code):
                 otp.attempts += 1
                 if otp.attempts >= OTPService.MAX_ATTEMPTS:
                     otp.blocked_until = now + timedelta(seconds=OTPService.BLOCK_DURATION_SECONDS)
-                    otp.is_used = True
                 otp.save(update_fields=["attempts", "blocked_until", "is_used"])
-                raise ValidationError({
-                    "code": "کد تأیید واردشده صحیح نیست."
-                })
-            otp.is_used = True
-            otp.save(update_fields=("is_used",))
-            user, _ = CustomUser.objects.get_or_create(phone_number=phone_number)
-            if not user.is_active:
-                raise ValidationError({
-                    "phone_number": "حساب کاربری شما غیرفعال است. لطفاً با پشتیبانی تماس بگیرید."
-                })
-            if not user.is_verified:
-                user.is_verified = True
-                user.save(update_fields=("is_verified",))
+                wrong_code = True
+            else:
+                otp.is_used = True
+                otp.save(update_fields=["is_used"])
+                user, _ = CustomUser.objects.get_or_create(phone_number=phone_number)
+                if not user.is_active:
+                    raise ValidationError({
+                        "phone_number": "حساب کاربری شما غیرفعال است. لطفاً با پشتیبانی تماس بگیرید."
+                    })
+                if not user.is_verified:
+                    user.is_verified = True
+                    user.save(update_fields=("is_verified",))
+                if guest_token:
+                    try:
+                        guest_uuid = UUID(guest_token)
+                    except ValueError:
+                        guest_uuid = None
+                    if guest_uuid:
+                        try:
+                            with transaction.atomic():
+                                CartService.merge_guest_cart(user=user, guest_token=guest_uuid)
+                        except ValidationError:
+                            logger.warning("ادغام سبد مهمان برای %s انجام نشد", phone_number)
+                refresh = RefreshToken.for_user(user)
+                tokens = {"access": str(refresh.access_token), "refresh": str(refresh)}
 
-            refresh = RefreshToken.for_user(user)
-            access = refresh.access_token
-            return {
-                "access": str(access),
-                "refresh": str(refresh),
-            }
+        if wrong_code:
+            raise ValidationError({"code": "کد تأیید واردشده صحیح نیست."})
+        return tokens
 
 
 class AuthService:

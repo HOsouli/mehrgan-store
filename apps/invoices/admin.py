@@ -6,7 +6,7 @@ class InvoiceItemInline(admin.TabularInline):
     model = InvoiceItem
     extra = 0
     autocomplete_fields = ("product",)
-    readonly_fields = ("product_name", "quantity", "unit_price", "discount_amount", "total_price")
+    readonly_fields = ("product", "product_name", "quantity", "unit_price", "discount_amount", "total_price")
 
 
 @admin.register(Invoice)

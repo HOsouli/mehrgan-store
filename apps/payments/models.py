@@ -2,6 +2,7 @@ from django.db import models
 from uuid import uuid4
 from apps.orders.models import Order
 from django.core.exceptions import ValidationError
+from django.db.models import Q
 
 
 class Payment(models.Model):
@@ -17,8 +18,8 @@ class Payment(models.Model):
     amount = models.DecimalField(max_digits=12, decimal_places=0, verbose_name="مبلغ پرداخت")
     status = models.CharField(max_length=20, choices=PaymentStatus.choices, default=PaymentStatus.PENDING, verbose_name="وضعیت پرداخت")
     gateway = models.CharField(max_length=50, verbose_name="درگاه پرداخت")
-    transaction_id = models.CharField(max_length=100, blank=True, verbose_name="شناسه تراکنش")
-    tracking_code = models.CharField(max_length=100, blank=True, verbose_name="کد رهگیری")
+    transaction_id = models.CharField(max_length=100, blank=True, null=True, unique=True, verbose_name="شناسه تراکنش")
+    tracking_code = models.CharField(max_length=100, blank=True, null=True, unique=True, verbose_name="کد رهگیری")
     gateway_response_code = models.CharField(max_length=10, blank=True, verbose_name="کد پاسخ درگاه")
     gateway_response_message = models.CharField(max_length=255, blank=True, verbose_name="پیام پاسخ درگاه")
     paid_at = models.DateTimeField(null=True, blank=True, verbose_name="زمان پرداخت")
@@ -49,6 +50,13 @@ class Payment(models.Model):
         verbose_name = "پرداخت"
         verbose_name_plural = "پرداخت‌ها"
         ordering = ("-created_at",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("order",),
+                condition=Q(status="pending"),
+                name="unique_pending_payment_per_order",
+            ),
+        ]
 
     def __str__(self):
         return f"شماره سفارش: {self.order.order_number} - مبلغ: {self.amount}"
