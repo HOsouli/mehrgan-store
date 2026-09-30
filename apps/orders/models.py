@@ -71,6 +71,12 @@ class Order(models.Model):
                 condition=Q(status="pending"),
             ),
         ]
+        constraints = [
+            models.CheckConstraint(condition=Q(subtotal__gte=0), name="order_subtotal_non_negative"),
+            models.CheckConstraint(condition=Q(discount_amount__gte=0), name="order_discount_non_negative"),
+            models.CheckConstraint(condition=Q(shipping_amount__gte=0), name="order_shipping_non_negative"),
+            models.CheckConstraint(condition=Q(total_amount__gte=0), name="order_total_non_negative"),
+        ]
 
     def __str__(self):
         return str(self.order_number)
@@ -103,6 +109,11 @@ class OrderItem(models.Model):
     class Meta:
         verbose_name = "آیتم سفارش"
         verbose_name_plural = "آیتم‌های سفارش"
+        constraints = [
+            models.CheckConstraint(condition=Q(unit_price__gte=0), name="order_item_price_non_negative"),
+            models.CheckConstraint(condition=Q(discount_amount__gte=0), name="order_item_discount_nonneg"),
+            models.CheckConstraint(condition=Q(total_price__gte=0), name="order_item_total_non_negative"),
+        ]
 
     def __str__(self):
         return f"{self.order.order_number} - {self.product.name}"

@@ -56,6 +56,11 @@ class Payment(models.Model):
                 condition=Q(status="pending"),
                 name="unique_pending_payment_per_order",
             ),
+            models.UniqueConstraint(
+                fields=("order",),
+                condition=Q(status="success"),
+                name="unique_success_payment_per_order",
+            ),
         ]
 
     def __str__(self):

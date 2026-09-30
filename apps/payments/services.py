@@ -97,8 +97,8 @@ class ZarinpalService:
             raise ValidationError("پرداخت یافت نشد.")
         if payment.status == Payment.PaymentStatus.SUCCESS:
             return payment
-        if payment.order.status == Order.OrderStatus.CANCELLED:
-            raise ValidationError("این سفارش لغو شده است.")
+        if payment.order.status != Order.OrderStatus.PENDING:
+            raise ValidationError("این سفارش در وضعیت قابل پرداخت نیست.")
         if timezone.now() > payment.order.expires_at:
             raise ValidationError("مهلت این سفارش به پایان رسیده است.")
         url = f"{ZarinpalService._base_url()}/pg/v4/payment/verify.json"
@@ -114,6 +114,8 @@ class ZarinpalService:
             raise ValidationError("خطا در ارتباط با درگاه پرداخت. لطفاً بعداً دوباره تلاش کنید.")
 
         info, code, message = ZarinpalService._parse_response(data)
+        if code is None:
+            raise ValidationError("پاسخ نامعتبر از درگاه پرداخت. لطفاً بعداً دوباره تلاش کنید.")
         payment.gateway_response_code = str(code or "")
         payment.gateway_response_message = message
 

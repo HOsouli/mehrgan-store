@@ -102,8 +102,13 @@ class OrderService:
         for item in items_data:
             pid = str(item["product_id"])
             merged_items[pid] = merged_items.get(pid, 0) + item["quantity"]
-        product_ids = [item["product_id"] for item in items_data]
-        products = Product.objects.select_related("category", "brand").select_for_update().filter(id__in=product_ids)
+        products = (
+            Product.objects
+            .select_related("category", "brand")
+            .select_for_update(of=("self",))
+            .filter(id__in=merged_items.keys())
+            .order_by("id")
+        )
         products_map = {str(p.id): p for p in products}
         if len(products_map) != len(merged_items):
             raise ValidationError("یک یا چند محصول یافت نشد.")
@@ -249,10 +254,12 @@ class OrderService:
                 # If the payment is successful, the order must not be cancelled.
                 if order.payments.filter(status=Payment.PaymentStatus.SUCCESS).exists():
                     continue
-                for item in order.items.all():
+                for item in order.items.order_by("product_id"):
                     product = Product.objects.select_for_update().get(id=item.product_id)
                     product.stock += item.quantity
                     product.save(update_fields=["stock"])
+                CouponUsage.objects.filter(order=order).delete()
+                order.payments.filter(status=Payment.PaymentStatus.PENDING).update(status=Payment.PaymentStatus.CANCELLED, updated_at=timezone.now())
                 order.status = Order.OrderStatus.CANCELLED
                 order.save(update_fields=["status", "updated_at"])
                 cancelled_count += 1
