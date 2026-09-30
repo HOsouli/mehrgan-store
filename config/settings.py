@@ -1,7 +1,7 @@
 from pathlib import Path
 from datetime import timedelta
 import os
-
+from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
 from django.core.exceptions import ImproperlyConfigured
 
@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django_jalali",
     "rest_framework",
     "django_filters",
     "corsheaders",
@@ -82,6 +83,7 @@ CORS_ALLOWED_ORIGINS = [
         "http://localhost:5173,http://127.0.0.1:5500,https://mehregan-pakhsh.vercel.app",
     ).split(",") if o.strip()
 ]
+CORS_ALLOW_HEADERS = (*default_headers, "x-guest-cart-token")
 
 ROOT_URLCONF = "config.urls"
 
@@ -141,6 +143,7 @@ REST_FRAMEWORK = {
         "otp_verify": "10/min",
         "otp_verify_ip": "20/min",
     },
+    "NUM_PROXIES": 1,
 }
 
 SIMPLE_JWT = {
@@ -210,6 +213,8 @@ SMSIR_TIMEOUT = 10
 
 # ---------- Zarinpal ----------
 ZARINPAL_MERCHANT_ID = os.getenv("ZARINPAL_MERCHANT_ID", "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
+if not DEBUG and not ZARINPAL_MERCHANT_ID:
+    raise ImproperlyConfigured("ZARINPAL_MERCHANT_ID تنظیم نشده است.")
 ZARINPAL_SANDBOX = os.getenv("ZARINPAL_SANDBOX", "True").lower() == "true"
 ZARINPAL_CALLBACK_URL = os.getenv("ZARINPAL_CALLBACK_URL", "http://127.0.0.1:8000/api/payments/callback/")
 

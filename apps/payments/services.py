@@ -27,7 +27,7 @@ class ZarinpalService:
     @staticmethod
     def request_payment(order):
         with transaction.atomic():
-            order = Order.objects.select_for_update().select_related("address").get(pk=order.pk)
+            order = Order.objects.select_for_update().get(pk=order.pk)
             if order.status == Order.OrderStatus.CANCELLED:
                 raise ValidationError("این سفارش لغو شده است.")
             if timezone.now() > order.expires_at:
