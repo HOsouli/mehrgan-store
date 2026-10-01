@@ -5,7 +5,7 @@ from .serializers import(
 )
 from .services import OTPService, AuthService
 from rest_framework import status
-from drf_spectacular.utils import extend_schema, OpenApiResponse
+from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiParameter
 from rest_framework.permissions import AllowAny
 from .throttles import OTPRequestThrottle, OTPRequestIPThrottle, OTPVerifyThrottle, OTPVerifyIPThrottle
 
@@ -34,10 +34,18 @@ class RequestOTPView(APIView):
         })
 
 
+GUEST_CART_TOKEN_PARAMETER = OpenApiParameter(
+    name="X-Guest-Cart-Token",
+    type=str,
+    location=OpenApiParameter.HEADER,
+    required=False,
+    description="شناسه سبد خرید مهمان برای ادغام سبد پس از ورود",
+)
 @extend_schema(
     summary="Verify OTP",
     description="Verify the OTP code and return JWT access and refresh tokens.",
     request=VerifyOTPSerializer,
+    parameters=[GUEST_CART_TOKEN_PARAMETER],
     responses={
         200: VerifyOTPResponseSerializer,
         400: OpenApiResponse(
