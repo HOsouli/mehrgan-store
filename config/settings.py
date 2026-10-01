@@ -80,7 +80,7 @@ MIDDLEWARE = [
 CORS_ALLOWED_ORIGINS = [
     o.strip() for o in os.getenv(
         "CORS_ALLOWED_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5500,https://mehregan-pakhsh.vercel.app",
+        "http://localhost:5173,http://127.0.0.1:5501,https://mehregan-pakhsh.vercel.app",
     ).split(",") if o.strip()
 ]
 CORS_ALLOW_HEADERS = (*default_headers, "x-guest-cart-token")
@@ -212,7 +212,7 @@ SMSIR_VERIFY_URL = "https://api.sms.ir/v1/send/verify"
 SMSIR_TIMEOUT = 10
 
 # ---------- Zarinpal ----------
-ZARINPAL_MERCHANT_ID = os.getenv("ZARINPAL_MERCHANT_ID", "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
+ZARINPAL_MERCHANT_ID = os.getenv("ZARINPAL_MERCHANT_ID", "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx").strip()
 if not DEBUG and not ZARINPAL_MERCHANT_ID:
     raise ImproperlyConfigured("ZARINPAL_MERCHANT_ID تنظیم نشده است.")
 ZARINPAL_SANDBOX = os.getenv("ZARINPAL_SANDBOX", "True").lower() == "true"
