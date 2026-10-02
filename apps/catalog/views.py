@@ -3,7 +3,6 @@ from .models import Product
 from .serializers import ProductDetailSerializer, ProductListSerializer
 from rest_framework.permissions import AllowAny
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.filters import SearchFilter
 
 
 class ProductPagination(PageNumberPagination):
@@ -14,8 +13,6 @@ class ProductListView(ListAPIView):
     queryset = Product.objects.select_related("category", "brand").prefetch_related("cars", "images").order_by("-created_at")
     serializer_class = ProductListSerializer
     pagination_class = ProductPagination
-    filter_backends = [SearchFilter]
-    search_fields = ["name", "model"]
 
 
 class ProductDetailView(RetrieveAPIView):
