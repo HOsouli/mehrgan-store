@@ -8,12 +8,20 @@ from rest_framework.exceptions import ValidationError, NotFound
 class CartService:
 
     @staticmethod
+    def get_cart(user=None, guest_token=None):
+        if user:
+            return Cart.objects.filter(user=user).first()
+        if guest_token:
+            return Cart.objects.filter(guest_token=guest_token).first()
+        return None
+
+    @staticmethod
     def get_or_create_cart(user=None, guest_token=None):
         if user:
             cart, _ = Cart.objects.get_or_create(user=user)
             return cart
-        if guest_token:
-            cart, _ = Cart.objects.get_or_create(guest_token=guest_token)
+        cart = CartService.get_cart(guest_token=guest_token)
+        if cart:
             return cart
         return Cart.objects.create(guest_token=uuid4())
 
@@ -56,7 +64,9 @@ class CartService:
     @staticmethod
     @transaction.atomic
     def update_item(user=None, guest_token=None, item_id=None, quantity=1):
-        cart = CartService.get_or_create_cart(user=user, guest_token=guest_token)
+        cart = CartService.get_cart(user=user, guest_token=guest_token)
+        if cart is None:
+            raise NotFound("سبد خرید پیدا نشد.")
         item = CartItem.objects.select_for_update().filter(cart=cart, id=item_id).first()
         if item is None:
             raise NotFound("آیتم مورد نظر در سبد خرید پیدا نشد.")
@@ -69,7 +79,9 @@ class CartService:
     @staticmethod
     @transaction.atomic
     def remove_item(user=None, guest_token=None, item_id=None):
-        cart = CartService.get_or_create_cart(user=user, guest_token=guest_token)
+        cart = CartService.get_cart(user=user, guest_token=guest_token)
+        if cart is None:
+            raise NotFound("سبد خرید پیدا نشد.")
         item = CartItem.objects.select_for_update().filter(cart=cart, id=item_id).first()
         if item is None:
             raise NotFound("آیتم مورد نظر در سبد خرید پیدا نشد.")
@@ -78,5 +90,6 @@ class CartService:
     @staticmethod
     @transaction.atomic
     def clear_cart(user=None, guest_token=None):
-        cart = CartService.get_or_create_cart(user=user, guest_token=guest_token)
-        cart.items.all().delete()
+        cart = CartService.get_cart(user=user, guest_token=guest_token)
+        if cart:
+            cart.items.all().delete()

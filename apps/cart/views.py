@@ -37,10 +37,17 @@ class CartView(APIView):
 
     def get(self, request):
         user, guest_token = get_cart_owner(request)
-        cart = CartService.get_or_create_cart(user=user, guest_token=guest_token)
-        serializer = CartSerializer(cart)
-        data = serializer.data
-        if not user and cart.guest_token:
+        cart = CartService.get_cart(user=user, guest_token=guest_token)
+        if cart is None:
+            return Response({
+                "id": None,
+                "items": [],
+                "item_count": 0,
+                "subtotal": 0,
+                "guest_token": None,
+            })
+        data = CartSerializer(cart).data
+        if not user:
             data["guest_token"] = str(cart.guest_token)
         return Response(data)
 
