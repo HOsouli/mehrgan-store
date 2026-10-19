@@ -4,6 +4,7 @@ import os
 from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
 from django.core.exceptions import ImproperlyConfigured
+from celery.schedules import crontab
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -199,6 +200,10 @@ CELERY_BEAT_SCHEDULE = {
     "cancel-expired-orders": {
         "task": "apps.orders.tasks.cancel_expired_orders",
         "schedule": 60.0,
+    },
+    "delete-expired-guest-carts": {
+        "task": "apps.cart.tasks.delete_expired_guest_carts",
+        "schedule": crontab(hour=3, minute=30),
     },
 }
 

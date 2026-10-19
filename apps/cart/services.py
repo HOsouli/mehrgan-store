@@ -59,6 +59,7 @@ class CartService:
             item.save(update_fields=["quantity", "updated_at"])
         else:
             item = CartItem.objects.create(cart=cart, product=product, quantity=quantity)
+        cart.save(update_fields=["updated_at"])
         return item
 
     @staticmethod
@@ -74,6 +75,7 @@ class CartService:
             raise ValidationError({"quantity": "تعداد درخواستی بیشتر از موجودی محصول است."})
         item.quantity = quantity
         item.save(update_fields=["quantity", "updated_at"])
+        cart.save(update_fields=["updated_at"])
         return item
 
     @staticmethod
@@ -86,6 +88,7 @@ class CartService:
         if item is None:
             raise NotFound("آیتم مورد نظر در سبد خرید پیدا نشد.")
         item.delete()
+        cart.save(update_fields=["updated_at"])
 
     @staticmethod
     @transaction.atomic
@@ -93,3 +96,4 @@ class CartService:
         cart = CartService.get_cart(user=user, guest_token=guest_token)
         if cart:
             cart.items.all().delete()
+            cart.save(update_fields=["updated_at"])
