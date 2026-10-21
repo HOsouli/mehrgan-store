@@ -75,6 +75,7 @@ class ZarinpalService:
         info, code, message = ZarinpalService._parse_response(data)
         payment.gateway_response_code = str(code or "")
         payment.gateway_response_message = message
+        print("ZARINPAL RESPONSE:", data)
 
         if code != 100:
             payment.status = Payment.PaymentStatus.FAILED
