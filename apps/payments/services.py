@@ -83,6 +83,7 @@ class ZarinpalService:
         pay_url = f"{ZarinpalService._base_url()}/pg/StartPay/{authority}"
         return payment, pay_url
 
+
     @staticmethod
     def verify_payment(payment_id, authority):
         try:
@@ -105,6 +106,7 @@ class ZarinpalService:
             info, code, message = ZarinpalService._parse_response(data)
             if code is None:
                 raise ValidationError("پاسخ نامعتبر از درگاه پرداخت. لطفاً بعداً دوباره تلاش کنید.")
+            missing_ref_id = False
             with transaction.atomic():
                 order = Order.objects.select_for_update().get(pk=payment.order_id)
                 payment = Payment.objects.select_for_update().get(pk=payment.pk)
@@ -120,16 +122,19 @@ class ZarinpalService:
                     if not ref_id:
                         payment.gateway_response_message = "درگاه پرداخت را موفق اعلام کرده اما کد رهگیری موجود نیست؛ بررسی دستی لازم است."
                         payment.save(update_fields=["gateway_response_code", "gateway_response_message", "updated_at"])
-                        raise ValidationError("کد رهگیری پرداخت در پاسخ درگاه وجود ندارد؛ پرداخت نیاز به بررسی دارد.")
-                    payment.status = Payment.PaymentStatus.SUCCESS
-                    payment.tracking_code = str(ref_id)
-                    payment.paid_at = timezone.now()
-                    if order.status == Order.OrderStatus.PENDING:
-                        order.status = Order.OrderStatus.PROCESSING
-                        order.save(update_fields=["status", "updated_at"])
+                        missing_ref_id = True
                     else:
-                        payment.gateway_response_message = "پرداخت موفق است؛ وضعیت سفارش نیاز به بررسی دستی دارد."
-                    payment.save(update_fields=["status", "tracking_code", "paid_at", "gateway_response_code", "gateway_response_message", "updated_at"])
+                        payment.status = Payment.PaymentStatus.SUCCESS
+                        payment.tracking_code = str(ref_id)
+                        payment.paid_at = timezone.now()
+                        if order.status == Order.OrderStatus.PENDING:
+                            order.status = Order.OrderStatus.PROCESSING
+                            order.save(update_fields=["status", "updated_at"])
+                        else:
+                            payment.gateway_response_message = "پرداخت موفق است؛ وضعیت سفارش نیاز به بررسی دستی دارد."
+                        payment.save(update_fields=["status", "tracking_code", "paid_at", "gateway_response_code", "gateway_response_message", "updated_at"])
+            if missing_ref_id:
+                raise ValidationError("کد رهگیری پرداخت در پاسخ درگاه وجود ندارد؛ پرداخت نیاز به بررسی دارد.")
         payment.refresh_from_db()
         if payment.status != Payment.PaymentStatus.SUCCESS:
             return payment
