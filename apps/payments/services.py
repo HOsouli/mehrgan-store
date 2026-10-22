@@ -91,7 +91,6 @@ class ZarinpalService:
             payment = Payment.objects.select_related("order").get(id=payment_id, transaction_id=authority)
         except Payment.DoesNotExist:
             raise ValidationError("پرداخت یافت نشد.")
-
         if payment.status != Payment.PaymentStatus.SUCCESS:
             url = f"{ZarinpalService._base_url()}/pg/v4/payment/verify.json"
             payload = {
@@ -111,26 +110,21 @@ class ZarinpalService:
                         payment.save(update_fields=["gateway_response_message", "updated_at"])
                 logger.warning("تأیید پرداخت %s به دلیل خطای ارتباطی نامشخص ماند: %s", payment_id, exc)
                 raise ValidationError("نتیجه پرداخت مشخص نشد؛ لطفاً دوباره تلاش کنید.") from exc
-
             info, code, message = ZarinpalService._parse_response(data)
             if code is None:
                 raise ValidationError("پاسخ نامعتبر از درگاه پرداخت. لطفاً بعداً دوباره تلاش کنید.")
-
             missing_ref_id = False
             with transaction.atomic():
                 order = Order.objects.select_for_update().get(pk=payment.order_id)
                 payment = Payment.objects.select_for_update().get(pk=payment.pk)
-
                 if payment.status != Payment.PaymentStatus.SUCCESS:
                     payment.gateway_response_code = str(code)
                     payment.gateway_response_message = message
-
                     if code not in (100, 101):
                         if payment.status == Payment.PaymentStatus.PENDING:
                             payment.status = Payment.PaymentStatus.FAILED
                         payment.save(update_fields=["status", "gateway_response_code", "gateway_response_message", "updated_at"])
                         return payment
-
                     ref_id = info.get("ref_id")
                     if not ref_id:
                         payment.gateway_response_message = "درگاه پرداخت را موفق اعلام کرده اما کد رهگیری موجود نیست؛ بررسی دستی لازم است."
@@ -140,27 +134,21 @@ class ZarinpalService:
                         payment.status = Payment.PaymentStatus.SUCCESS
                         payment.tracking_code = str(ref_id)
                         payment.paid_at = timezone.now()
-
                         if order.status == Order.OrderStatus.PENDING and timezone.now() <= order.expires_at:
                             order.status = Order.OrderStatus.PROCESSING
                             order.save(update_fields=["status", "updated_at"])
                         else:
                             payment.gateway_response_message = "پرداخت موفق است؛ سفارش لغو شده، منقضی شده یا در وضعیت غیرمنتظره است؛ بررسی دستی لازم است."
-
                         payment.save(update_fields=["status", "tracking_code", "paid_at", "gateway_response_code", "gateway_response_message", "updated_at"])
-
             if missing_ref_id:
                 raise ValidationError("کد رهگیری پرداخت در پاسخ درگاه وجود ندارد؛ پرداخت نیاز به بررسی دارد.")
-
         payment.refresh_from_db()
         if payment.status != Payment.PaymentStatus.SUCCESS:
             return payment
-
         order = payment.order
         if order.status != Order.OrderStatus.PROCESSING:
             logger.error("پرداخت %s موفق است اما سفارش %s در وضعیت %s قرار دارد؛ بررسی دستی لازم است.", payment.pk, order.pk, order.status)
             return payment
-
         try:
             with transaction.atomic():
                 Shipment.objects.get_or_create(
@@ -197,5 +185,4 @@ class ZarinpalService:
         except Exception as exc:
             logger.exception("ساخت مرسوله یا فاکتور برای سفارش %s ناموفق بود", order.pk)
             raise ValidationError("پرداخت موفق است، اما تکمیل فاکتور یا مرسوله ناموفق بود؛ لطفاً دوباره تلاش کنید.") from exc
-
         return payment
