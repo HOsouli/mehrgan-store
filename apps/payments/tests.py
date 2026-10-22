@@ -123,13 +123,15 @@ class VerifyPaymentTests(SimpleTestCase):
         lock_payment.return_value.get.return_value = self.payment
         post.return_value.raise_for_status.return_value = None
         post.return_value.json.return_value = {}
+        get_invoice.return_value = (MagicMock(), False)
         result = ZarinpalService.verify_payment(self.payment.pk, "authority")
         self.assertEqual(result.status, Payment.PaymentStatus.SUCCESS)
         self.assertEqual(result.tracking_code, "123456")
-        self.assertEqual(self.order.status, Payment.order.field.related_model.OrderStatus.PENDING)
+        self.assertEqual(self.order.status, Payment.order.field.related_model.OrderStatus.PROCESSING)
+        self.assertTrue(result.paid_at)
         post.assert_called_once()
-        get_shipment.assert_not_called()
-        get_invoice.assert_not_called()
+        get_shipment.assert_called_once()
+        get_invoice.assert_called_once()
 
     @patch("apps.payments.services.transaction.atomic", return_value=nullcontext())
     @patch("apps.payments.services.Payment.objects.select_for_update")
