@@ -4,6 +4,9 @@ from django.test import SimpleTestCase
 from apps.payments.models import Payment
 from apps.payments.services import ZarinpalService
 from rest_framework.exceptions import ValidationError
+from django.utils import timezone
+from datetime import timedelta
+import requests
 
 
 class VerifyPaymentTests(SimpleTestCase):
@@ -22,6 +25,7 @@ class VerifyPaymentTests(SimpleTestCase):
         self.payment.transaction_id = "authority"
         self.payment.amount = 100
         self.payment.status = Payment.PaymentStatus.SUCCESS
+        self.order.expires_at = timezone.now() + timedelta(minutes=15)
 
     @patch("apps.payments.services.transaction.atomic", return_value=nullcontext())
     @patch("apps.payments.services.Invoice.objects.get_or_create")
@@ -101,3 +105,41 @@ class VerifyPaymentTests(SimpleTestCase):
         self.assertTrue(result.paid_at)
         get_shipment.assert_called_once()
         get_invoice.assert_called_once()
+
+    @patch("apps.payments.services.Invoice.objects.get_or_create")
+    @patch("apps.payments.services.Shipment.objects.get_or_create")
+    @patch("apps.payments.services.transaction.atomic", return_value=nullcontext())
+    @patch("apps.payments.services.Payment.objects.select_for_update")
+    @patch("apps.payments.services.Order.objects.select_for_update")
+    @patch("apps.payments.services.Payment.objects.select_related")
+    @patch("apps.payments.services.ZarinpalService._parse_response", return_value=({"ref_id": 123456}, 100, "success"))
+    @patch("apps.payments.services.requests.post")
+    def test_successful_payment_for_expired_order(self, post, parse_response, select_related, lock_order, lock_payment, atomic, get_shipment, get_invoice):
+        self.payment.status = Payment.PaymentStatus.PENDING
+        self.order.status = Payment.order.field.related_model.OrderStatus.PENDING
+        self.order.expires_at = timezone.now() - timedelta(minutes=15)
+        select_related.return_value.get.return_value = self.payment
+        lock_order.return_value.get.return_value = self.order
+        lock_payment.return_value.get.return_value = self.payment
+        post.return_value.raise_for_status.return_value = None
+        post.return_value.json.return_value = {}
+        result = ZarinpalService.verify_payment(self.payment.pk, "authority")
+        self.assertEqual(result.status, Payment.PaymentStatus.SUCCESS)
+        self.assertEqual(result.tracking_code, "123456")
+        self.assertEqual(self.order.status, Payment.order.field.related_model.OrderStatus.PENDING)
+        post.assert_called_once()
+        get_shipment.assert_not_called()
+        get_invoice.assert_not_called()
+
+    @patch("apps.payments.services.transaction.atomic", return_value=nullcontext())
+    @patch("apps.payments.services.Payment.objects.select_for_update")
+    @patch("apps.payments.services.Payment.objects.select_related")
+    @patch("apps.payments.services.requests.post", side_effect=requests.exceptions.Timeout)
+    def test_network_error_keeps_payment_pending(self, post, select_related, lock_payment, atomic):
+        self.payment.status = Payment.PaymentStatus.PENDING
+        select_related.return_value.get.return_value = self.payment
+        lock_payment.return_value.get.return_value = self.payment
+        with self.assertRaises(ValidationError):
+            ZarinpalService.verify_payment(self.payment.pk, "authority")
+        self.assertEqual(self.payment.status, Payment.PaymentStatus.PENDING)
+        self.payment.save.assert_called_once()
