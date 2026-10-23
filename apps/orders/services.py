@@ -9,6 +9,7 @@ from apps.payments.models import Payment
 from .models import Order, OrderItem, OrderAddress
 from apps.cart.services import CartService
 from django.db.models import Q
+from datetime import timedelta
 
 
 class OrderService:
@@ -232,6 +233,16 @@ class OrderService:
         CartService.clear_cart(user=user)
         return order
 
+
+    PAYMENT_GRACE = timedelta(minutes=30)
+    @staticmethod
+    def _inflight_payments(now):
+        return Payment.objects.filter(
+            status=Payment.PaymentStatus.PENDING,
+            transaction_id__isnull=False,
+            created_at__gte=now - OrderService.PAYMENT_GRACE,
+        ).exclude(transaction_id="")
+
     @staticmethod
     def cancel_expired_orders(batch_size=200):
         now = timezone.now()
@@ -246,13 +257,12 @@ class OrderService:
                     order = Order.objects.select_for_update(skip_locked=True).get(id=order_id)
                 except Order.DoesNotExist:
                     continue
-
-                # The order status may have changed between the time it was located and the time the lock was acquired.
                 if order.status != Order.OrderStatus.PENDING or order.expires_at >= timezone.now():
                     continue
-
-                # If the payment is successful, the order must not be cancelled.
                 if order.payments.filter(status=Payment.PaymentStatus.SUCCESS).exists():
+                    continue
+                # پرداخت در حال بررسی: تا مشخص شدن نتیجه، سفارش لغو نشود.
+                if OrderService._inflight_payments(timezone.now()).filter(order_id=order.pk).exists():
                     continue
                 for item in order.items.order_by("product_id"):
                     product = Product.objects.select_for_update().get(id=item.product_id)
@@ -264,4 +274,3 @@ class OrderService:
                 order.save(update_fields=["status", "updated_at"])
                 cancelled_count += 1
         return cancelled_count
-

@@ -205,6 +205,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.cart.tasks.delete_expired_guest_carts",
         "schedule": crontab(hour=3, minute=30),
     },
+    "reverify-pending-payments": {
+        "task": "apps.payments.tasks.reverify_pending_payments",
+        "schedule": crontab(minute="*/5"),
+    },
 }
 
 # ---------- OTP ----------

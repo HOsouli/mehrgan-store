@@ -107,7 +107,8 @@ class ZarinpalService:
                     payment = Payment.objects.select_for_update().get(pk=payment.pk)
                     if payment.status != Payment.PaymentStatus.SUCCESS:
                         payment.gateway_response_message = "نتیجه تأیید پرداخت به دلیل خطای ارتباطی مشخص نشد؛ بازبینی مجدد لازم است."
-                        payment.save(update_fields=["gateway_response_message", "updated_at"])
+                        payment.gateway_response_code = "net"
+                        payment.save(update_fields=["gateway_response_code", "gateway_response_message", "updated_at"])
                 logger.warning("تأیید پرداخت %s به دلیل خطای ارتباطی نامشخص ماند: %s", payment_id, exc)
                 raise ValidationError("نتیجه پرداخت مشخص نشد؛ لطفاً دوباره تلاش کنید.") from exc
             info, code, message = ZarinpalService._parse_response(data)
