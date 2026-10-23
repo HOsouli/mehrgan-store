@@ -6,7 +6,7 @@ class PhoneBasedThrottle(SimpleRateThrottle):
     def get_phone_number(self, request):
         data = getattr(request, "data", None)
 
-        if isinstance(data, dict):
+        if hasattr(data, "get"):
             phone = data.get("phone_number")
 
             if isinstance(phone, str) and phone.strip():
