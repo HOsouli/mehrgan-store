@@ -223,7 +223,8 @@ class OrderService:
             line["product"].save(update_fields=["stock"])
         OrderAddress.objects.create(
             order=order,
-            recipient_name=validated_data["recipient_name"],
+            first_name=validated_data["first_name"],
+            last_name=validated_data["last_name"],
             province=validated_data["province"],
             city=validated_data["city"],
             address=validated_data["address"],

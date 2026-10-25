@@ -10,7 +10,8 @@ class OrderItemInputSerializer(serializers.Serializer):
 
 class OrderCreateSerializer(serializers.Serializer):
     items = OrderItemInputSerializer(many=True)
-    recipient_name = serializers.CharField(max_length=100)
+    first_name = serializers.CharField(max_length=50)
+    last_name = serializers.CharField(max_length=50)
     province = serializers.CharField(max_length=100)
     city = serializers.CharField(max_length=100)
     address = serializers.CharField()
@@ -44,7 +45,7 @@ class OrderItemDetailSerializer(serializers.ModelSerializer):
 class OrderAddressDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrderAddress
-        fields = ["recipient_name", "province", "city", "address", "postal_code", "recipient_phone"]
+        fields = ["first_name", "last_name", "province", "city", "address", "postal_code", "recipient_phone"]
 
 
 class OrderDetailSerializer(serializers.ModelSerializer):

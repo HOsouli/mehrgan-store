@@ -122,7 +122,8 @@ class OrderItem(models.Model):
 class OrderAddress(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False, verbose_name="شناسه")
     order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name="address", verbose_name="سفارش")  # Each order has exactly one delivery address.
-    recipient_name = models.CharField(max_length=100, verbose_name="نام گیرنده")
+    first_name = models.CharField(max_length=50, verbose_name="نام گیرنده")
+    last_name = models.CharField(max_length=50, verbose_name="نام خانوادگی گیرنده")
     province = models.CharField(max_length=100, verbose_name="استان")
     city = models.CharField(max_length=100, verbose_name="شهر")
     address = models.TextField(verbose_name="آدرس")
