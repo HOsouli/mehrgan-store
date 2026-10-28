@@ -38,7 +38,7 @@ class ProductListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Product
-        fields = ["id", "name", "slug", "model", "price", "stock", "category", "brand", "cars", "img"]
+        fields = ["id", "name", "slug", "model", "description", "price", "stock", "category", "brand", "cars", "img"]
 
     def get_stock(self, obj):
         return obj.stock > 0
