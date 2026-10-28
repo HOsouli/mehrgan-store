@@ -51,4 +51,15 @@ class PaymentAdmin(admin.ModelAdmin):
 
     @admin.display(description="نیازمند بررسی", boolean=True)
     def review_required(self, obj):
-        return (obj.status == Payment.PaymentStatus.SUCCESS and obj.order.status == Order.OrderStatus.CANCELLED)
+        return (
+            obj.gateway_response_code == "net"
+            or (
+                obj.status == Payment.PaymentStatus.SUCCESS
+                and obj.order.status != Order.OrderStatus.PROCESSING
+            )
+            or (
+                obj.status == Payment.PaymentStatus.PENDING
+                and not obj.transaction_id
+                and bool(obj.gateway_response_message)
+            )
+        )

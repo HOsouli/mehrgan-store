@@ -347,6 +347,7 @@ class PaymentViewsTests(APITestCase):
             self.request_url,
             {"order_id": "00000000-0000-0000-0000-000000000001"},
             format="json",
+            secure=True,
         )
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
@@ -354,6 +355,7 @@ class PaymentViewsTests(APITestCase):
         response = self.client.get(
             self.callback_url,
             {"payment_id": "invalid", "Authority": "AUTH_TEST", "Status": "OK"},
+            secure=True,
         )
         self.assertEqual(response.status_code, 302)
         self.assertIn("status=failed", response.url)
@@ -367,6 +369,7 @@ class PaymentViewsTests(APITestCase):
                 "Authority": "AUTH_TEST",
                 "Status": "NOK",
             },
+            secure=True,
         )
         self.assertEqual(response.status_code, 302)
         self.assertIn("status=failed", response.url)
@@ -386,6 +389,7 @@ class PaymentViewsTests(APITestCase):
             self.request_url,
             {"order_id": str(order.pk)},
             format="json",
+            secure=True,
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
