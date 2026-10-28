@@ -5,24 +5,19 @@ class PhoneBasedThrottle(SimpleRateThrottle):
 
     def get_phone_number(self, request):
         data = getattr(request, "data", None)
-
         if hasattr(data, "get"):
             phone = data.get("phone_number")
-
             if isinstance(phone, str) and phone.strip():
                 return phone.strip()
-
         return None
 
     def get_cache_key(self, request, view):
         phone = self.get_phone_number(request)
-
         if phone is None:
             return self.cache_format % {
                 "scope": self.scope,
                 "ident": f"invalid:{self.get_ident(request)}",
             }
-
         return self.cache_format % {
             "scope": self.scope,
             "ident": f"phone:{phone}",

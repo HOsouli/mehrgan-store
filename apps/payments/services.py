@@ -21,11 +21,26 @@ class ZarinpalService:
 
     @staticmethod
     def _parse_response(data):
+        if not isinstance(data, dict):
+            data = {}
         info = data.get("data") if isinstance(data.get("data"), dict) else {}
         err = data.get("errors") if isinstance(data.get("errors"), dict) else {}
         code = info.get("code", err.get("code"))
         message = info.get("message") or err.get("message", "")
         return info, code, str(message)[:255]
+
+    @staticmethod
+    def _mark_payment_for_review(payment_id, message):
+        with transaction.atomic():
+            payment = Payment.objects.select_for_update().get(pk=payment_id)
+            if payment.status != Payment.PaymentStatus.SUCCESS:
+                payment.gateway_response_code = "net"
+                payment.gateway_response_message = message[:255]
+                payment.save(update_fields=[
+                    "gateway_response_code",
+                    "gateway_response_message",
+                    "updated_at",
+                ])
 
     @staticmethod
     def request_payment(order):
@@ -103,17 +118,13 @@ class ZarinpalService:
                 response.raise_for_status()
                 data = response.json()
             except (requests.exceptions.RequestException, ValueError) as exc:
-                with transaction.atomic():
-                    payment = Payment.objects.select_for_update().get(pk=payment.pk)
-                    if payment.status != Payment.PaymentStatus.SUCCESS:
-                        payment.gateway_response_message = "نتیجه تأیید پرداخت به دلیل خطای ارتباطی مشخص نشد؛ بازبینی مجدد لازم است."
-                        payment.gateway_response_code = "net"
-                        payment.save(update_fields=["gateway_response_code", "gateway_response_message", "updated_at"])
+                ZarinpalService._mark_payment_for_review(payment.pk, "نتیجه تأیید پرداخت به دلیل خطای ارتباطی مشخص نشد؛ بازبینی مجدد لازم است.")
                 logger.warning("تأیید پرداخت %s به دلیل خطای ارتباطی نامشخص ماند: %s", payment_id, exc)
                 raise ValidationError("نتیجه پرداخت مشخص نشد؛ لطفاً دوباره تلاش کنید.") from exc
             info, code, message = ZarinpalService._parse_response(data)
             if code is None:
-                raise ValidationError("پاسخ نامعتبر از درگاه پرداخت. لطفاً بعداً دوباره تلاش کنید.")
+                ZarinpalService._mark_payment_for_review(payment.pk, "پاسخ درگاه فاقد کد وضعیت معتبر است؛ بازبینی مجدد لازم است.")
+                raise ValidationError("پاسخ درگاه معتبر نیست؛ نتیجه پرداخت نیاز به بررسی مجدد دارد.")
             missing_ref_id = False
             with transaction.atomic():
                 order = Order.objects.select_for_update().get(pk=payment.order_id)
