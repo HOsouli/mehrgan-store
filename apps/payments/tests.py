@@ -16,6 +16,9 @@ from decimal import Decimal
 from apps.invoices.models import Invoice
 from apps.shipments.models import Shipment
 from apps.payments.tasks import reverify_pending_payments
+from rest_framework.test import APITestCase
+from rest_framework import status
+from django.urls import reverse
 
 
 class VerifyPaymentTests(SimpleTestCase):
@@ -161,10 +164,10 @@ class RequestPaymentTests(TestCase):
         self.user = CustomUser.objects.create_user(phone_number="09123456789")
         self.order = Order.objects.create(
             user=self.user,
-            subtotal=Decimal("100000"),
-            discount_amount=Decimal("0"),
-            shipping_amount=Decimal("0"),
-            total_amount=Decimal("100000"),
+            subtotal=Decimal(100000),
+            discount_amount=Decimal(0),
+            shipping_amount=Decimal(0),
+            total_amount=Decimal(100000),
             expires_at=timezone.now() + timedelta(hours=1),
         )
         OrderAddress.objects.create(
@@ -214,6 +217,17 @@ class RequestPaymentTests(TestCase):
         self.assertEqual(payment.status, Payment.PaymentStatus.PENDING)
         self.assertFalse(payment.transaction_id)
         self.assertTrue(payment.gateway_response_message)
+
+    @patch("apps.payments.services.requests.post")
+    def test_successful_gateway_response_without_authority_fails_safely(self, post):
+        post.return_value.json.return_value = {
+            "data": {"code": 100}
+        }
+        with self.assertRaises(ValidationError):
+            ZarinpalService.request_payment(self.order)
+        payment = Payment.objects.get(order=self.order)
+        self.assertEqual(payment.status, Payment.PaymentStatus.PENDING)
+        self.assertFalse(payment.transaction_id)
 
 
 class VerifyPaymentDatabaseTests(TestCase):
@@ -318,3 +332,76 @@ class VerifyPaymentDatabaseTests(TestCase):
         self.assertEqual(checked, 1)
         self.assertEqual(self.payment.status, Payment.PaymentStatus.SUCCESS)
         self.assertEqual(self.payment.tracking_code, "REF_RETRY_123")
+
+
+class PaymentViewsTests(APITestCase):
+    def setUp(self):
+        self.user = CustomUser.objects.create_user(phone_number="09123456789")
+        self.client.force_authenticate(user=self.user)
+        self.request_url = reverse("payments:request")
+        self.callback_url = reverse("payments:callback")
+
+    def test_payment_request_requires_authentication(self):
+        self.client.force_authenticate(user=None)
+        response = self.client.post(
+            self.request_url,
+            {"order_id": "00000000-0000-0000-0000-000000000001"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_payment_callback_with_invalid_payment_id_redirects_to_failure(self):
+        response = self.client.get(
+            self.callback_url,
+            {"payment_id": "invalid", "Authority": "AUTH_TEST", "Status": "OK"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("status=failed", response.url)
+
+    @patch("apps.payments.views.ZarinpalService.verify_payment")
+    def test_payment_callback_with_failed_gateway_status_does_not_verify(self, verify_payment):
+        response = self.client.get(
+            self.callback_url,
+            {
+                "payment_id": "00000000-0000-0000-0000-000000000001",
+                "Authority": "AUTH_TEST",
+                "Status": "NOK",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("status=failed", response.url)
+        verify_payment.assert_not_called()
+
+    def test_payment_request_rejects_another_users_order(self):
+        other_user = CustomUser.objects.create_user(phone_number="09123456780")
+        order = Order.objects.create(
+            user=other_user,
+            subtotal=Decimal(100000),
+            discount_amount=Decimal(0),
+            shipping_amount=Decimal(0),
+            total_amount=Decimal(100000),
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+        response = self.client.post(
+            self.request_url,
+            {"order_id": str(order.pk)},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    @patch("apps.payments.views.ZarinpalService.verify_payment")
+    def test_payment_callback_failed_verification_redirects_to_failure(self, verify_payment):
+        payment = MagicMock()
+        payment.status = Payment.PaymentStatus.FAILED
+        verify_payment.return_value = payment
+        response = self.client.get(
+            self.callback_url,
+            {
+                "payment_id": "00000000-0000-0000-0000-000000000001",
+                "Authority": "AUTH_TEST",
+                "Status": "OK",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("status=failed", response.url)
+        verify_payment.assert_called_once()

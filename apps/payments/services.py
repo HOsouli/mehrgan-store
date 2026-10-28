@@ -61,9 +61,7 @@ class ZarinpalService:
                 pay_url = f"{ZarinpalService._base_url()}/pg/StartPay/{existing_pending.transaction_id}"
                 return existing_pending, pay_url
             if existing_pending:
-                existing_pending.status = Payment.PaymentStatus.FAILED
-                existing_pending.gateway_response_message = "درخواست قبلی پرداخت بدون دریافت شناسه تراکنش باقی مانده بود."
-                existing_pending.save(update_fields=["status", "gateway_response_message", "updated_at"])
+                raise ValidationError("درخواست پرداخت قبلی نتیجه مشخصی ندارد؛ بررسی دستی لازم است.")
             payment = Payment.objects.create(
                 order=order,
                 amount=order.total_amount,
@@ -81,24 +79,49 @@ class ZarinpalService:
         try:
             response = requests.post(url, json=payload, timeout=10)
             data = response.json()
-        except requests.exceptions.RequestException:
-            payment.gateway_response_message = "خطا در ارتباط با درگاه پرداخت."
-            payment.save(update_fields=["gateway_response_message", "updated_at"])
-            raise ValidationError("خطا در ارتباط با درگاه پرداخت. لطفاً دوباره تلاش کنید.")
+        except (requests.exceptions.RequestException, ValueError):
+            payment.gateway_response_code = "net"
+            payment.gateway_response_message = "نتیجه درخواست پرداخت مشخص نیست؛ بررسی دستی لازم است."
+            payment.save(update_fields=[
+                "gateway_response_code",
+                "gateway_response_message",
+                "updated_at",
+            ])
+            raise ValidationError("نتیجه پرداخت مشخص نیست؛ لطفاً دوباره تلاش کنید.")
         info, code, message = ZarinpalService._parse_response(data)
         payment.gateway_response_code = str(code or "")
         payment.gateway_response_message = message
+        if code == 100 and not info.get("authority"):
+            payment.gateway_response_message = ("درگاه پاسخ موفق داده اما شناسه تراکنش وجود ندارد؛ بررسی دستی لازم است.")
+            payment.save(update_fields=[
+                "gateway_response_code",
+                "gateway_response_message",
+                "updated_at",
+            ])
+            raise ValidationError("نتیجه درخواست پرداخت مشخص نیست؛ لطفاً برای بررسی اقدام کنید.")
+        if code is None:
+            payment.gateway_response_code = "net"
+            payment.gateway_response_message = "پاسخ درگاه فاقد کد وضعیت معتبر است؛ بررسی دستی لازم است."
+            payment.save(update_fields=[
+                "gateway_response_code",
+                "gateway_response_message",
+                "updated_at",
+            ])
+            raise ValidationError("نتیجه درخواست پرداخت مشخص نیست؛ لطفاً برای بررسی اقدام کنید.")
         if code != 100:
             payment.status = Payment.PaymentStatus.FAILED
-            payment.save(update_fields=["status", "gateway_response_code", "gateway_response_message", "updated_at"])
-            raise ValidationError("خطا در اتصال به درگاه پرداخت.")
+            payment.save(update_fields=[
+                "status",
+                "gateway_response_code",
+                "gateway_response_message",
+                "updated_at",
+            ])
+            raise ValidationError("پاسخ درگاه معتبر نیست؛ لطفاً دوباره تلاش کنید.")
         authority = info["authority"]
         payment.transaction_id = authority
         payment.save(update_fields=["transaction_id", "gateway_response_code", "gateway_response_message", "updated_at"])
         pay_url = f"{ZarinpalService._base_url()}/pg/StartPay/{authority}"
         return payment, pay_url
-
-
 
     @staticmethod
     def verify_payment(payment_id, authority):
