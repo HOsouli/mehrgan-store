@@ -1,4 +1,5 @@
 from django.contrib import admin
+from apps.orders.models import Order
 from .models import Payment
 
 
@@ -16,6 +17,7 @@ class PaymentAdmin(admin.ModelAdmin):
         "paid_at",
         "created_at",
     )
+    list_select_related = ("order",)
     search_fields = (
         "order__order_number",
         "transaction_id",
@@ -49,4 +51,4 @@ class PaymentAdmin(admin.ModelAdmin):
 
     @admin.display(description="نیازمند بررسی", boolean=True)
     def review_required(self, obj):
-        return (obj.status == Payment.PaymentStatus.SUCCESS and obj.order.status == "cancelled")
+        return (obj.status == Payment.PaymentStatus.SUCCESS and obj.order.status == Order.OrderStatus.CANCELLED)
