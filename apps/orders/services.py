@@ -94,7 +94,6 @@ class OrderService:
                     return discount
         return None
 
-
     @staticmethod
     @transaction.atomic
     def create_order(user, validated_data):
@@ -195,7 +194,6 @@ class OrderService:
             if discount.target_type != Discount.TargetType.ORDER and discount_amount == 0:
                 raise ValidationError("این تخفیف شامل محصولات سبد خرید شما نمی‌شود.")
             discount_amount = min(discount_amount, subtotal)
-
         shipping_amount = Decimal("0")
         total_amount = subtotal - discount_amount + shipping_amount
         order = Order.objects.create(
@@ -209,7 +207,6 @@ class OrderService:
         )
         if discount:
             CouponUsage.objects.create(user=user, discount=discount, order=order)
-
         for line in line_items:
             OrderItem.objects.create(
                 order=order,
@@ -234,8 +231,7 @@ class OrderService:
         CartService.clear_cart(user=user)
         return order
 
-
-    PAYMENT_GRACE = timedelta(minutes=30)
+    PAYMENT_GRACE = timedelta(hours=1)
     @staticmethod
     def _inflight_payments(now):
         return Payment.objects.filter(

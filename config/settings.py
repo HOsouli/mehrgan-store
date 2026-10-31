@@ -209,6 +209,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.payments.tasks.reverify_pending_payments",
         "schedule": crontab(minute="*/5"),
     },
+    "cleanup-expired-tokens": {
+        "task": "apps.accounts.tasks.cleanup_expired_tokens",
+        "schedule": crontab(hour=3, minute=45),
+    },
 }
 
 # ---------- OTP ----------

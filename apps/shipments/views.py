@@ -20,6 +20,3 @@ class OrderShipmentView(APIView):
         shipment = get_object_or_404(Shipment, order=order)
         serializer = ShipmentDetailSerializer(shipment)
         return Response(serializer.data)
-
-
-

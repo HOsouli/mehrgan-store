@@ -64,5 +64,8 @@ class PaymentCallbackView(APIView):
         if payment.status != Payment.PaymentStatus.SUCCESS:
             return redirect(f"{failed_url}&payment_id={payment_uuid}")
         return redirect(
-            f"{result_url}?status=success&order_number={payment.order.order_number}&tracking_code={payment.tracking_code}"
+            f"{result_url}?status=success"
+            f"&order_id={payment.order_id}"
+            f"&order_number={payment.order.order_number}"
+            f"&tracking_code={payment.tracking_code}"
         )

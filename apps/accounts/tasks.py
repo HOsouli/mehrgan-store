@@ -1,3 +1,4 @@
+from django.core.management import call_command
 import logging
 from celery import shared_task
 from .sms import SMSIrService, SMSIrPermanentError, SMSIrTransientError
@@ -8,7 +9,6 @@ logger = logging.getLogger(__name__)
 def deliver_otp_sms(phone_number: str, code: str) -> bool:
     """Synchronous sending (without Celery) — for fallback when the broker is unavailable."""
     return SMSIrService.send_otp(phone_number, code)
-
 
 @shared_task(
     bind=True,
@@ -36,3 +36,8 @@ def send_otp_sms(self, phone_number: str, code: str) -> bool:
             exc,
         )
         return False
+
+@shared_task(name="apps.accounts.tasks.cleanup_expired_tokens", ignore_result=True)
+def cleanup_expired_tokens():
+    call_command("flushexpiredtokens")
+    logger.info("Expired JWT tokens cleaned up successfully.")

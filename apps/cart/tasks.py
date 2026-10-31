@@ -4,6 +4,7 @@ from celery import shared_task
 from django.utils import timezone
 from .models import Cart
 
+
 logger = logging.getLogger(__name__)
 
 GUEST_CART_TTL_DAYS = 60
