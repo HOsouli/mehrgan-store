@@ -17,6 +17,6 @@ class OrderShipmentView(APIView):
     )
     def get(self, request, order_id):
         order = get_object_or_404(Order, id=order_id, user=request.user)
-        shipment = get_object_or_404(Shipment, order=order)
+        shipment = get_object_or_404(Shipment.objects.select_related("order"), order=order)
         serializer = ShipmentDetailSerializer(shipment)
         return Response(serializer.data)
