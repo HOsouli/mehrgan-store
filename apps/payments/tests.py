@@ -314,19 +314,13 @@ class VerifyPaymentDatabaseTests(TestCase):
         self.assertEqual(self.payment.gateway_response_code, "net")
 
     @patch("apps.payments.services.requests.post")
-    def test_reverify_task_retries_pending_payment(self, post):
+    @patch("apps.payments.tasks.ZarinpalService.inquire_payment", return_value="PAID")
+    def test_reverify_task_retries_pending_payment(self, inquire, post):
         self.payment.status = Payment.PaymentStatus.PENDING
         self.payment.gateway_response_code = "net"
         self.payment.save(update_fields=["status", "gateway_response_code", "updated_at"])
-
-        # Make the payment eligible for retry after five minutes.
         Payment.objects.filter(pk=self.payment.pk).update(updated_at=timezone.now() - timedelta(minutes=6))
-        post.return_value.json.return_value = {
-            "data": {
-                "code": 100,
-                "ref_id": "REF_RETRY_123",
-            }
-        }
+        post.return_value.json.return_value = {"data": {"code": 100, "ref_id": "REF_RETRY_123"}}
         checked = reverify_pending_payments()
         self.payment.refresh_from_db()
         self.assertEqual(checked, 1)
@@ -409,3 +403,256 @@ class PaymentViewsTests(APITestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIn("status=failed", response.url)
         verify_payment.assert_called_once()
+
+
+class InquirePaymentTests(SimpleTestCase):
+    @patch("apps.payments.services.requests.post")
+    def test_returns_status_and_sends_authority(self, post):
+        post.return_value.json.return_value = {"data": {"status": "PAID", "code": 100}}
+        self.assertEqual(ZarinpalService.inquire_payment("AUTH_1"), "PAID")
+        args, kwargs = post.call_args
+        self.assertTrue(args[0].endswith("/pg/v4/payment/inquiry.json"))
+        self.assertEqual(kwargs["json"]["authority"], "AUTH_1")
+        self.assertEqual(kwargs["json"]["merchant_id"], settings.ZARINPAL_MERCHANT_ID)
+
+    @patch("apps.payments.services.requests.post")
+    def test_http_error_returns_none(self, post):
+        post.return_value.raise_for_status.side_effect = requests.exceptions.HTTPError
+        self.assertIsNone(ZarinpalService.inquire_payment("AUTH_1"))
+
+    @patch("apps.payments.services.requests.post", side_effect=requests.exceptions.Timeout)
+    def test_network_error_returns_none(self, post):
+        self.assertIsNone(ZarinpalService.inquire_payment("AUTH_1"))
+
+    @patch("apps.payments.services.requests.post")
+    def test_invalid_body_returns_none(self, post):
+        post.return_value.json.return_value = {"errors": {"code": -54}}
+        self.assertIsNone(ZarinpalService.inquire_payment("AUTH_1"))
+
+
+class PaymentRecoveryTaskTests(TestCase):
+    def setUp(self):
+        self.user = CustomUser.objects.create_user(phone_number="09123456789")
+        self.order = Order.objects.create(
+            user=self.user,
+            subtotal=100000,
+            discount_amount=0,
+            shipping_amount=0,
+            total_amount=100000,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+        self.payment = Payment.objects.create(
+            order=self.order,
+            amount=100000,
+            gateway="zarinpal",
+            status=Payment.PaymentStatus.PENDING,
+            transaction_id="AUTH_RECOVERY_1",
+        )
+        self.age(10)
+
+    def age(self, minutes):
+        moment = timezone.now() - timedelta(minutes=minutes)
+        Payment.objects.filter(pk=self.payment.pk).update(created_at=moment, updated_at=moment)
+
+    def set_order_status(self, order_status):
+        Order.objects.filter(pk=self.order.pk).update(status=order_status)
+
+    def refresh(self):
+        self.payment.refresh_from_db()
+        self.order.refresh_from_db()
+
+    @patch("apps.payments.services.requests.post")
+    @patch("apps.payments.tasks.ZarinpalService.inquire_payment", return_value="PAID")
+    def test_paid_in_gateway_but_callback_lost_completes_order(self, inquire, post):
+        post.return_value.json.return_value = {"data": {"code": 100, "ref_id": "REF_1"}}
+        reverify_pending_payments()
+        self.refresh()
+        self.assertEqual(self.payment.status, Payment.PaymentStatus.SUCCESS)
+        self.assertEqual(self.payment.tracking_code, "REF_1")
+        self.assertEqual(self.order.status, Order.OrderStatus.PROCESSING)
+        self.assertTrue(Invoice.objects.filter(order=self.order).exists())
+        self.assertTrue(Shipment.objects.filter(order=self.order).exists())
+
+    @patch("apps.payments.services.requests.post")
+    @patch("apps.payments.tasks.ZarinpalService.inquire_payment", return_value="IN_BANK")
+    def test_in_bank_keeps_payment_pending_and_postpones_next_check(self, inquire, post):
+        old_updated_at = Payment.objects.get(pk=self.payment.pk).updated_at
+        reverify_pending_payments()
+        self.refresh()
+        self.assertEqual(self.payment.status, Payment.PaymentStatus.PENDING)
+        self.assertGreater(self.payment.updated_at, old_updated_at)
+        post.assert_not_called()
+
+    @patch("apps.payments.services.requests.post")
+    @patch("apps.payments.tasks.ZarinpalService.inquire_payment", return_value=None)
+    def test_unknown_inquiry_keeps_payment_pending(self, inquire, post):
+        reverify_pending_payments()
+        self.refresh()
+        self.assertEqual(self.payment.status, Payment.PaymentStatus.PENDING)
+        post.assert_not_called()
+
+    @patch("apps.payments.tasks.ZarinpalService.inquire_payment", return_value="FAILED")
+    def test_failed_inquiry_closes_payment_only_after_grace(self, inquire):
+        reverify_pending_payments()
+        self.refresh()
+        self.assertEqual(self.payment.status, Payment.PaymentStatus.PENDING)
+        self.age(31)
+        reverify_pending_payments()
+        self.refresh()
+        self.assertEqual(self.payment.status, Payment.PaymentStatus.FAILED)
+        self.assertEqual(self.payment.gateway_response_code, "FAILED")
+
+    @patch("apps.payments.tasks.ZarinpalService.inquire_payment", return_value="REVERSED")
+    def test_reversed_inquiry_is_recorded_and_order_not_reactivated(self, inquire):
+        reverify_pending_payments()
+        self.refresh()
+        self.assertEqual(self.payment.status, Payment.PaymentStatus.FAILED)
+        self.assertEqual(self.payment.gateway_response_code, "REVERSED")
+        self.assertIn("برگشت", self.payment.gateway_response_message)
+        self.assertEqual(self.order.status, Order.OrderStatus.PENDING)
+        self.assertFalse(Invoice.objects.filter(order=self.order).exists())
+
+    @patch("apps.payments.services.requests.post")
+    @patch("apps.payments.tasks.ZarinpalService.inquire_payment", return_value="PAID")
+    def test_late_payment_for_cancelled_order_is_not_reactivated(self, inquire, post):
+        self.set_order_status(Order.OrderStatus.CANCELLED)
+        Payment.objects.filter(pk=self.payment.pk).update(status=Payment.PaymentStatus.CANCELLED)
+        post.return_value.json.return_value = {"data": {"code": 100, "ref_id": "REF_LATE_1"}}
+        reverify_pending_payments()
+        self.refresh()
+        self.assertEqual(self.payment.status, Payment.PaymentStatus.SUCCESS)
+        self.assertEqual(self.order.status, Order.OrderStatus.CANCELLED)
+        self.assertFalse(Invoice.objects.filter(order=self.order).exists())
+        self.assertFalse(Shipment.objects.filter(order=self.order).exists())
+
+    @patch("apps.payments.tasks.ZarinpalService.inquire_payment", return_value="PAID")
+    def test_too_old_or_too_recent_payments_are_not_inquired(self, inquire):
+        for minutes in (25 * 60, 2):
+            with self.subTest(minutes=minutes):
+                self.age(minutes)
+                reverify_pending_payments()
+                inquire.assert_not_called()
+
+    @patch("apps.payments.services.requests.post")
+    @patch("apps.payments.tasks.ZarinpalService.inquire_payment", return_value=None)
+    def test_paid_order_without_invoice_or_shipment_is_completed(self, inquire, post):
+        self.set_order_status(Order.OrderStatus.PROCESSING)
+        Payment.objects.filter(pk=self.payment.pk).update(
+            status=Payment.PaymentStatus.SUCCESS,
+            tracking_code="REF_DONE_1",
+            paid_at=timezone.now(),
+        )
+        result = reverify_pending_payments()
+        self.assertEqual(result, 1)
+        self.assertTrue(Invoice.objects.filter(order=self.order).exists())
+        self.assertTrue(Shipment.objects.filter(order=self.order).exists())
+        post.assert_not_called()
+        inquire.assert_not_called()
+
+    @patch("apps.payments.tasks.cache.add")
+    def test_manual_review_cases_are_logged_once(self, add):
+        self.set_order_status(Order.OrderStatus.CANCELLED)
+        Payment.objects.filter(pk=self.payment.pk).update(
+            status=Payment.PaymentStatus.SUCCESS,
+            tracking_code="REF_REVIEW_1",
+            paid_at=timezone.now(),
+        )
+        add.return_value = True
+        with self.assertLogs("apps.payments.tasks", level="ERROR") as logs:
+            reverify_pending_payments()
+        self.assertTrue(any(str(self.payment.pk) in line for line in logs.output))
+        add.return_value = False
+        with self.assertNoLogs("apps.payments.tasks", level="ERROR"):
+            reverify_pending_payments()
+
+    @patch("apps.payments.tasks.cache.add", return_value=True)
+    def test_reversed_payment_is_reported_for_review(self, add):
+        Payment.objects.filter(pk=self.payment.pk).update(
+            status=Payment.PaymentStatus.FAILED,
+            gateway_response_code="REVERSED",
+            updated_at=timezone.now(),
+        )
+        with self.assertLogs("apps.payments.tasks", level="ERROR") as logs:
+            reverify_pending_payments()
+        self.assertTrue(any("تطبیق مالی" in line for line in logs.output))
+
+
+class PaymentCallbackFlowTests(APITestCase):
+    def setUp(self):
+        self.user = CustomUser.objects.create_user(phone_number="09123456789")
+        self.order = Order.objects.create(
+            user=self.user,
+            subtotal=100000,
+            discount_amount=0,
+            shipping_amount=0,
+            total_amount=100000,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+        self.payment = Payment.objects.create(
+            order=self.order,
+            amount=100000,
+            gateway="zarinpal",
+            status=Payment.PaymentStatus.PENDING,
+            transaction_id="AUTH_CB_1",
+        )
+        self.callback_url = reverse("payments:callback")
+
+    def call_callback(self, authority="AUTH_CB_1", gateway_status="OK"):
+        return self.client.get(
+            self.callback_url,
+            {"payment_id": str(self.payment.pk), "Authority": authority, "Status": gateway_status},
+            secure=True,
+        )
+
+    @patch("apps.payments.services.requests.post")
+    def test_wrong_authority_redirects_to_failure_without_gateway_call(self, post):
+        response = self.call_callback(authority="WRONG_AUTHORITY")
+        self.assertIn("status=failed", response.url)
+        post.assert_not_called()
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.status, Payment.PaymentStatus.PENDING)
+
+    @patch("apps.payments.services.requests.post")
+    def test_successful_verification_redirects_to_success(self, post):
+        post.return_value.json.return_value = {"data": {"code": 100, "ref_id": "REF_CB_1"}}
+        response = self.call_callback()
+        self.assertIn("status=success", response.url)
+        self.assertIn("tracking_code=REF_CB_1", response.url)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.OrderStatus.PROCESSING)
+
+    @patch("apps.payments.services.requests.post", side_effect=requests.exceptions.Timeout)
+    def test_network_error_redirects_to_pending(self, post):
+        response = self.call_callback()
+        self.assertIn("status=pending", response.url)
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.status, Payment.PaymentStatus.PENDING)
+
+    @patch("apps.payments.services.requests.post")
+    def test_definite_gateway_failure_redirects_to_failure(self, post):
+        post.return_value.json.return_value = {"data": {}, "errors": {"code": -51, "message": "failed"}}
+        response = self.call_callback()
+        self.assertIn("status=failed", response.url)
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.status, Payment.PaymentStatus.FAILED)
+
+    @patch("apps.payments.services.requests.post")
+    def test_success_for_cancelled_order_is_not_shown_as_success(self, post):
+        Order.objects.filter(pk=self.order.pk).update(status=Order.OrderStatus.CANCELLED)
+        post.return_value.json.return_value = {"data": {"code": 100, "ref_id": "REF_CB_2"}}
+        response = self.call_callback()
+        self.assertIn("status=pending", response.url)
+        self.assertNotIn("status=success", response.url)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.OrderStatus.CANCELLED)
+
+    @patch("apps.payments.services.requests.post")
+    def test_repeated_callback_does_not_call_gateway_twice(self, post):
+        post.return_value.json.return_value = {"data": {"code": 100, "ref_id": "REF_CB_3"}}
+        first = self.call_callback()
+        second = self.call_callback()
+        self.assertIn("status=success", first.url)
+        self.assertIn("status=success", second.url)
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual(Invoice.objects.filter(order=self.order).count(), 1)
+        self.assertEqual(Shipment.objects.filter(order=self.order).count(), 1)

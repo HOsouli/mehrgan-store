@@ -56,13 +56,26 @@ class PaymentCallbackView(APIView):
             return redirect(failed_url)
         if gateway_status != "OK" or not authority:
             return redirect(f"{failed_url}&payment_id={payment_uuid}")
+        pending_url = f"{result_url}?status=pending&payment_id={payment_uuid}"
         try:
             payment = ZarinpalService.verify_payment(payment_id=payment_uuid, authority=authority)
         except ValidationError as exc:
             logger.warning("تأیید پرداخت %s ناموفق بود: %s", payment_uuid, exc.detail)
-            return redirect(f"{failed_url}&payment_id={payment_uuid}")
+            payment = (
+                Payment.objects.select_related("order")
+                .filter(pk=payment_uuid, transaction_id=authority)
+                .first()
+            )
+            if payment is None or payment.status == Payment.PaymentStatus.FAILED:
+                return redirect(f"{failed_url}&payment_id={payment_uuid}")
+            if payment.status in (Payment.PaymentStatus.PENDING, Payment.PaymentStatus.CANCELLED):
+                return redirect(pending_url)
+        if payment.status == Payment.PaymentStatus.PENDING:
+            return redirect(pending_url)
         if payment.status != Payment.PaymentStatus.SUCCESS:
             return redirect(f"{failed_url}&payment_id={payment_uuid}")
+        if payment.order.status != Order.OrderStatus.PROCESSING:
+            return redirect(pending_url)
         return redirect(
             f"{result_url}?status=success"
             f"&order_id={payment.order_id}"

@@ -11,7 +11,7 @@ ENV PYTHONUNBUFFERED=1
 
 # Install pip requirements
 COPY requirements.txt .
-RUN python -m pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir --default-timeout=100 -i https://mirror-pypi.runflare.com/simple -r requirements.txt
 
 WORKDIR /app
 COPY . /app

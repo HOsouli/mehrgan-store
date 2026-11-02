@@ -3,7 +3,6 @@ from .views import RequestOTPView, VerifyOTPView, LogoutView
 from rest_framework_simplejwt.views import TokenRefreshView
 
 
-
 app_name = "accounts"
 
 urlpatterns = [

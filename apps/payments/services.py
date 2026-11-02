@@ -30,6 +30,26 @@ class ZarinpalService:
         return info, code, str(message)[:255]
 
     @staticmethod
+    def inquire_payment(authority):
+        """وضعیت تراکنش را از درگاه می‌پرسد. نامشخص یا خطا: None."""
+        url = f"{ZarinpalService._base_url()}/pg/v4/payment/inquiry.json"
+        payload = {
+            "merchant_id": settings.ZARINPAL_MERCHANT_ID,
+            "authority": authority,
+        }
+        try:
+            response = requests.post(url, json=payload, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+        except (requests.exceptions.RequestException, ValueError) as exc:
+            logger.warning("استعلام پرداخت ناموفق بود: %s", exc)
+            return None
+        info = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(info, dict):
+            return None
+        return info.get("status")
+
+    @staticmethod
     def _mark_payment_for_review(payment_id, message):
         with transaction.atomic():
             payment = Payment.objects.select_for_update().get(pk=payment_id)

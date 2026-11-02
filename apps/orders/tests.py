@@ -46,7 +46,7 @@ class CancelExpiredOrdersTests(TestCase):
             status=Payment.PaymentStatus.PENDING,
             transaction_id="A2",
         )
-        old_time = timezone.now() - timedelta(minutes=31)
+        old_time = timezone.now() - timedelta(minutes=61)
         Payment.objects.filter(pk=payment.pk).update(
             created_at=old_time,
             updated_at=old_time,
@@ -117,3 +117,14 @@ class CancelExpiredOrdersTests(TestCase):
         )
         OrderService.cancel_expired_orders()
         self.assertFalse(CouponUsage.objects.filter(order=order).exists())
+
+    def test_order_not_expired_is_not_cancelled(self):
+        order = Order.objects.create(
+            user=self.user,
+            subtotal=1000,
+            total_amount=1000,
+            expires_at=timezone.now() + timedelta(minutes=10),
+        )
+        OrderService.cancel_expired_orders()
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.OrderStatus.PENDING)
