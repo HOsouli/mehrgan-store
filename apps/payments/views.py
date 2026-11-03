@@ -61,11 +61,7 @@ class PaymentCallbackView(APIView):
             payment = ZarinpalService.verify_payment(payment_id=payment_uuid, authority=authority)
         except ValidationError as exc:
             logger.warning("تأیید پرداخت %s ناموفق بود: %s", payment_uuid, exc.detail)
-            payment = (
-                Payment.objects.select_related("order")
-                .filter(pk=payment_uuid, transaction_id=authority)
-                .first()
-            )
+            payment = (Payment.objects.select_related("order").filter(pk=payment_uuid, transaction_id=authority).first())
             if payment is None or payment.status == Payment.PaymentStatus.FAILED:
                 return redirect(f"{failed_url}&payment_id={payment_uuid}")
             if payment.status in (Payment.PaymentStatus.PENDING, Payment.PaymentStatus.CANCELLED):
@@ -74,11 +70,52 @@ class PaymentCallbackView(APIView):
             return redirect(pending_url)
         if payment.status != Payment.PaymentStatus.SUCCESS:
             return redirect(f"{failed_url}&payment_id={payment_uuid}")
-        if payment.order.status != Order.OrderStatus.PROCESSING:
-            return redirect(pending_url)
+        if payment.order.status not in (
+            Order.OrderStatus.PROCESSING,
+            Order.OrderStatus.SHIPPED,
+            Order.OrderStatus.DELIVERED,
+        ):
+            return redirect(f"{result_url}?status=review&payment_id={payment_uuid}")
         return redirect(
             f"{result_url}?status=success"
             f"&order_id={payment.order_id}"
             f"&order_number={payment.order.order_number}"
             f"&tracking_code={payment.tracking_code}"
         )
+
+
+class PaymentStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+    @extend_schema(
+        summary="Payment Status",
+        description="Retrieve the status and details of an owned payment.",
+    )
+    def get(self, request, payment_id):
+        payment = (Payment.objects.select_related("order").filter(pk=payment_id, order__user=request.user).first())
+        if payment is None:
+            return Response({"detail": "پرداخت یافت نشد."}, status=status.HTTP_404_NOT_FOUND)
+        if payment.status == Payment.PaymentStatus.SUCCESS:
+            result = (
+                "success"
+                if payment.order.status in (
+                    Order.OrderStatus.PROCESSING,
+                    Order.OrderStatus.SHIPPED,
+                    Order.OrderStatus.DELIVERED,
+                )
+                else "review"
+            )
+        elif payment.status in (Payment.PaymentStatus.PENDING, Payment.PaymentStatus.CANCELLED):
+            result = "pending"
+        else:
+            result = "failed"
+        return Response({
+            "payment_id": str(payment.id),
+            "status": result,
+            "payment_status": payment.status,
+            "order_id": str(payment.order_id),
+            "order_number": payment.order.order_number,
+            "order_status": payment.order.status,
+            "amount": payment.amount,
+            "tracking_code": payment.tracking_code,
+            "paid_at": payment.paid_at,
+        })

@@ -189,7 +189,7 @@ class ZarinpalService:
                         payment.status = Payment.PaymentStatus.SUCCESS
                         payment.tracking_code = str(ref_id)
                         payment.paid_at = timezone.now()
-                        if order.status == Order.OrderStatus.PENDING:
+                        if order.status == Order.OrderStatus.PENDING and order.expires_at > timezone.now():
                             order.status = Order.OrderStatus.PROCESSING
                             order.save(update_fields=["status", "updated_at"])
                         else:

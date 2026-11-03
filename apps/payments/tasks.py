@@ -93,27 +93,47 @@ def _complete_paid_orders(now, batch_size):
 
 def _report_manual_review(now):
     try:
-        since = now - REVIEW_WINDOW
         late_paid = list(
             Payment.objects.filter(
                 status=Payment.PaymentStatus.SUCCESS,
-                order__status=Order.OrderStatus.CANCELLED,
-                paid_at__gte=since,
-            ).values_list("id", flat=True)
+                order__status__in=(
+                    Order.OrderStatus.PENDING,
+                    Order.OrderStatus.CANCELLED,
+                ),
+            ).values_list("id", "order__status")
+        )
+        aged_unsettled = list(
+            Payment.objects.filter(
+                status__in=UNSETTLED,
+                created_at__lte=now - LOOKBACK,
+            ).values_list("id", "transaction_id")
         )
         reversed_ids = list(
             Payment.objects.filter(
                 status=Payment.PaymentStatus.FAILED,
                 gateway_response_code="REVERSED",
-                updated_at__gte=since,
             ).values_list("id", flat=True)
         )
-        for payment_id in late_paid:
+        for payment_id, order_status in late_paid:
             if _first_time(f"payment-review-late-{payment_id}"):
-                logger.error("پرداخت %s موفق است اما سفارش لغو شده؛ بررسی دستی و برگشت وجه لازم است.", payment_id)
+                logger.error(
+                    "پرداخت %s موفق است اما سفارش در وضعیت %s قرار دارد؛ بررسی دستی لازم است.",
+                    payment_id,
+                    order_status,
+                )
+        for payment_id, transaction_id in aged_unsettled:
+            if _first_time(f"payment-review-aged-{payment_id}"):
+                logger.error(
+                    "پرداخت %s بیش از ۲۴ ساعت نامشخص مانده است؛ شناسه تراکنش: %s؛ بررسی دستی لازم است.",
+                    payment_id,
+                    transaction_id or "ندارد",
+                )
         for payment_id in reversed_ids:
             if _first_time(f"payment-review-reversed-{payment_id}"):
-                logger.error("پرداخت %s برگشت وجه اعلام‌شده توسط درگاه دارد؛ نیازمند تطبیق مالی.", payment_id)
+                logger.error(
+                    "پرداخت %s برگشت وجه اعلام‌شده توسط درگاه دارد؛ نیازمند تطبیق مالی.",
+                    payment_id,
+                )
     except Exception:
         logger.exception("گزارش بررسی دستی ناموفق بود")
 

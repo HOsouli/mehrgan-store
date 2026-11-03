@@ -1,6 +1,8 @@
 from django.contrib import admin
 from apps.orders.models import Order
 from .models import Payment
+from datetime import timedelta
+from django.utils import timezone
 
 
 @admin.register(Payment)
@@ -52,14 +54,23 @@ class PaymentAdmin(admin.ModelAdmin):
     @admin.display(description="نیازمند بررسی", boolean=True)
     def review_required(self, obj):
         return (
-            obj.gateway_response_code == "net"
+            obj.gateway_response_code in ("net", "REVERSED")
             or (
                 obj.status == Payment.PaymentStatus.SUCCESS
-                and obj.order.status != Order.OrderStatus.PROCESSING
+                and obj.order.status in (
+                    Order.OrderStatus.PENDING,
+                    Order.OrderStatus.CANCELLED,
+                )
             )
             or (
-                obj.status == Payment.PaymentStatus.PENDING
-                and not obj.transaction_id
-                and bool(obj.gateway_response_message)
+                obj.status in (
+                    Payment.PaymentStatus.PENDING,
+                    Payment.PaymentStatus.CANCELLED,
+                )
+                and (
+                    not obj.transaction_id
+                    or bool(obj.gateway_response_message)
+                    or obj.created_at <= timezone.now() - timedelta(hours=24)
+                )
             )
         )
