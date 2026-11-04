@@ -7,6 +7,12 @@ class OrderItemInline(admin.TabularInline):
     extra = 0
     readonly_fields = ("product", "quantity", "unit_price", "discount_amount", "total_price",)
 
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 
 class OrderAddressInline(admin.StackedInline):
     model = OrderAddress
@@ -14,6 +20,11 @@ class OrderAddressInline(admin.StackedInline):
     max_num = 1
     readonly_fields = ("first_name", "last_name", "province", "city", "address", "postal_code", "recipient_phone", "created_at")
 
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
@@ -36,6 +47,7 @@ class OrderAdmin(admin.ModelAdmin):
         "id",
         "order_number",
         "user",
+        "status",
         "subtotal",
         "discount_amount",
         "shipping_amount",
@@ -48,3 +60,8 @@ class OrderAdmin(admin.ModelAdmin):
 
     inlines = (OrderItemInline, OrderAddressInline)
 
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

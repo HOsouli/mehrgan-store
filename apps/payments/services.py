@@ -12,6 +12,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+FAIL_AFTER = timedelta(minutes=30)
+
 
 class ZarinpalService:
 
@@ -50,6 +52,25 @@ class ZarinpalService:
         return info.get("status")
 
     @staticmethod
+    def resolve_abandoned_payment(payment_id, authority):
+        state = ZarinpalService.inquire_payment(authority)
+        if state in ("PAID", "VERIFIED"):
+            return ZarinpalService.verify_payment(payment_id=payment_id, authority=authority)
+        if state == "FAILED":
+            Payment.objects.filter(
+                pk=payment_id,
+                transaction_id=authority,
+                status=Payment.PaymentStatus.PENDING,
+                created_at__lte=timezone.now() - FAIL_AFTER,
+            ).update(
+                status=Payment.PaymentStatus.FAILED,
+                gateway_response_code="FAILED",
+                gateway_response_message="استعلام درگاه: تراکنش ناموفق است.",
+                updated_at=timezone.now(),
+            )
+        return None
+
+    @staticmethod
     def _mark_payment_for_review(payment_id, message):
         with transaction.atomic():
             payment = Payment.objects.select_for_update().get(pk=payment_id)
@@ -74,8 +95,13 @@ class ZarinpalService:
                 raise ValidationError("این سفارش در وضعیت قابل پرداخت نیست.")
             if order.payments.filter(status=Payment.PaymentStatus.SUCCESS).exists():
                 raise ValidationError("این سفارش قبلاً پرداخت شده است.")
-            order.expires_at = max(order.expires_at, timezone.now() + timedelta(minutes=15))
-            order.save(update_fields=["expires_at", "updated_at"])
+            now = timezone.now()
+            hard_limit = order.created_at + timedelta(hours=1)
+            if order.expires_at < hard_limit:
+                new_expiry = min(max(order.expires_at, now + timedelta(minutes=15)), hard_limit)
+                if new_expiry != order.expires_at:
+                    order.expires_at = new_expiry
+                    order.save(update_fields=["expires_at", "updated_at"])
             existing_pending = order.payments.filter(status=Payment.PaymentStatus.PENDING).first()
             if existing_pending and existing_pending.transaction_id:
                 pay_url = f"{ZarinpalService._base_url()}/pg/StartPay/{existing_pending.transaction_id}"
@@ -186,14 +212,19 @@ class ZarinpalService:
                         payment.save(update_fields=["gateway_response_code", "gateway_response_message", "updated_at"])
                         missing_ref_id = True
                     else:
+                        now = timezone.now()
+                        reservation_active = (
+                            order.expires_at > now
+                            or payment.created_at >= now - Order.PAYMENT_GRACE
+                        )
                         payment.status = Payment.PaymentStatus.SUCCESS
                         payment.tracking_code = str(ref_id)
-                        payment.paid_at = timezone.now()
-                        if order.status == Order.OrderStatus.PENDING and order.expires_at > timezone.now():
+                        payment.paid_at = now
+                        if order.status == Order.OrderStatus.PENDING and reservation_active:
                             order.status = Order.OrderStatus.PROCESSING
                             order.save(update_fields=["status", "updated_at"])
                         else:
-                            payment.gateway_response_message = "پرداخت موفق است؛ سفارش لغو شده، منقضی شده یا در وضعیت غیرمنتظره است؛ بررسی دستی لازم است."
+                            payment.gateway_response_message = "پرداخت موفق است؛ سفارش لغو شده، مهلت رزرو آن پایان یافته یا در وضعیت غیرمنتظره است؛ بررسی دستی لازم است."
                         payment.save(update_fields=["status", "tracking_code", "paid_at", "gateway_response_code", "gateway_response_message", "updated_at"])
             if missing_ref_id:
                 raise ValidationError("کد رهگیری پرداخت در پاسخ درگاه وجود ندارد؛ پرداخت نیاز به بررسی دارد.")
@@ -220,8 +251,8 @@ class ZarinpalService:
                     defaults={
                         "subtotal": order.subtotal,
                         "discount_amount": order.discount_amount,
-                        "shipping_amount": order.shipping_amount,
-                        "total_amount": order.total_amount,
+                        "shipping_amount": 0,
+                        "total_amount": order.subtotal - order.discount_amount,
                         "status": Invoice.InvoiceStatus.ISSUED,
                         "issued_at": timezone.now(),
                     },

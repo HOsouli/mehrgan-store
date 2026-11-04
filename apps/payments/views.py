@@ -44,30 +44,37 @@ class PaymentCallbackView(APIView):
         summary="Payment Callback",
         description="Zarinpal redirects the user's browser here after payment. Verifies the transaction and redirects to the frontend result page.",
     )
+
     def get(self, request):
         payment_id = request.query_params.get("payment_id")
         authority = request.query_params.get("Authority")
         gateway_status = request.query_params.get("Status")
         result_url = f"{settings.FRONTEND_URL}/payment-result"
         failed_url = f"{result_url}?status=failed"
+        pending_url = f"{result_url}?status=pending"
         try:
             payment_uuid = UUID(payment_id)
         except (TypeError, ValueError):
             return redirect(failed_url)
-        if gateway_status != "OK" or not authority:
+        if not authority:
             return redirect(f"{failed_url}&payment_id={payment_uuid}")
-        pending_url = f"{result_url}?status=pending&payment_id={payment_uuid}"
         try:
-            payment = ZarinpalService.verify_payment(payment_id=payment_uuid, authority=authority)
+            if gateway_status != "OK":
+                ZarinpalService.resolve_abandoned_payment(payment_uuid, authority)
+            else:
+                ZarinpalService.verify_payment(payment_id=payment_uuid, authority=authority)
         except ValidationError as exc:
-            logger.warning("تأیید پرداخت %s ناموفق بود: %s", payment_uuid, exc.detail)
-            payment = (Payment.objects.select_related("order").filter(pk=payment_uuid, transaction_id=authority).first())
-            if payment is None or payment.status == Payment.PaymentStatus.FAILED:
-                return redirect(f"{failed_url}&payment_id={payment_uuid}")
-            if payment.status in (Payment.PaymentStatus.PENDING, Payment.PaymentStatus.CANCELLED):
-                return redirect(pending_url)
-        if payment.status == Payment.PaymentStatus.PENDING:
-            return redirect(pending_url)
+            logger.warning("بررسی پرداخت %s ناموفق بود: %s", payment_uuid, exc.detail)
+        except Exception:
+            logger.exception("خطای غیرمنتظره در بررسی پرداخت %s", payment_uuid)
+        payment = Payment.objects.select_related("order").filter(pk=payment_uuid, transaction_id=authority,).first()
+        if payment is None or payment.status == Payment.PaymentStatus.FAILED:
+            return redirect(f"{failed_url}&payment_id={payment_uuid}")
+        if payment.status in (
+            Payment.PaymentStatus.PENDING,
+            Payment.PaymentStatus.CANCELLED,
+        ):
+            return redirect(f"{pending_url}&payment_id={payment_uuid}")
         if payment.status != Payment.PaymentStatus.SUCCESS:
             return redirect(f"{failed_url}&payment_id={payment_uuid}")
         if payment.order.status not in (

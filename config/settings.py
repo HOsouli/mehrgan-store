@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from django.core.exceptions import ImproperlyConfigured
 from celery.schedules import crontab
 
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -225,10 +226,9 @@ SMSIR_VERIFY_URL = "https://api.sms.ir/v1/send/verify"
 SMSIR_TIMEOUT = 10
 
 # ---------- Zarinpal ----------
-ZARINPAL_MERCHANT_ID = os.getenv("ZARINPAL_MERCHANT_ID", "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx").strip()
+ZARINPAL_MERCHANT_ID = os.getenv("ZARINPAL_MERCHANT_ID", "").strip()
+ZARINPAL_SANDBOX = os.getenv("ZARINPAL_SANDBOX", "False").strip().lower() == "true"
 if not DEBUG and not ZARINPAL_MERCHANT_ID:
     raise ImproperlyConfigured("ZARINPAL_MERCHANT_ID تنظیم نشده است.")
-ZARINPAL_SANDBOX = os.getenv("ZARINPAL_SANDBOX", "True").lower() == "true"
 ZARINPAL_CALLBACK_URL = os.getenv("ZARINPAL_CALLBACK_URL", "http://127.0.0.1:8000/api/payments/callback/")
-
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")

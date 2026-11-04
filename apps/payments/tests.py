@@ -38,6 +38,7 @@ class VerifyPaymentTests(SimpleTestCase):
         self.payment.amount = 100
         self.payment.status = Payment.PaymentStatus.SUCCESS
         self.order.expires_at = timezone.now() + timedelta(minutes=15)
+        self.payment.created_at = timezone.now()
 
     @patch("apps.payments.services.transaction.atomic", return_value=nullcontext())
     @patch("apps.payments.services.Invoice.objects.get_or_create")
@@ -117,6 +118,12 @@ class VerifyPaymentTests(SimpleTestCase):
         self.assertTrue(result.paid_at)
         get_shipment.assert_called_once()
         get_invoice.assert_called_once()
+        invoice_defaults = get_invoice.call_args.kwargs["defaults"]
+        self.assertEqual(invoice_defaults["shipping_amount"], 0)
+        self.assertEqual(
+            invoice_defaults["total_amount"],
+            self.order.subtotal - self.order.discount_amount,
+        )
 
     @patch("apps.payments.services.Invoice.objects.get_or_create")
     @patch("apps.payments.services.Shipment.objects.get_or_create")
@@ -126,7 +133,7 @@ class VerifyPaymentTests(SimpleTestCase):
     @patch("apps.payments.services.Payment.objects.select_related")
     @patch("apps.payments.services.ZarinpalService._parse_response", return_value=({"ref_id": 123456}, 100, "success"))
     @patch("apps.payments.services.requests.post")
-    def test_successful_payment_for_expired_order(self, post, parse_response, select_related, lock_order, lock_payment, atomic, get_shipment, get_invoice):
+    def test_successful_payment_for_expired_order_within_grace(self, post, parse_response, select_related, lock_order, lock_payment, atomic, get_shipment, get_invoice):
         self.payment.status = Payment.PaymentStatus.PENDING
         self.order.status = Payment.order.field.related_model.OrderStatus.PENDING
         self.order.expires_at = timezone.now() - timedelta(minutes=15)
@@ -139,9 +146,34 @@ class VerifyPaymentTests(SimpleTestCase):
         result = ZarinpalService.verify_payment(self.payment.pk, "authority")
         self.assertEqual(result.status, Payment.PaymentStatus.SUCCESS)
         self.assertEqual(result.tracking_code, "123456")
-        self.assertEqual(self.order.status, Payment.order.field.related_model.OrderStatus.PENDING)
+        self.assertEqual(self.order.status, Payment.order.field.related_model.OrderStatus.PROCESSING)
         self.assertTrue(result.paid_at)
         post.assert_called_once()
+        get_shipment.assert_called_once()
+        get_invoice.assert_called_once()
+
+    @patch("apps.payments.services.Invoice.objects.get_or_create")
+    @patch("apps.payments.services.Shipment.objects.get_or_create")
+    @patch("apps.payments.services.transaction.atomic", return_value=nullcontext())
+    @patch("apps.payments.services.Payment.objects.select_for_update")
+    @patch("apps.payments.services.Order.objects.select_for_update")
+    @patch("apps.payments.services.Payment.objects.select_related")
+    @patch("apps.payments.services.ZarinpalService._parse_response", return_value=({"ref_id": 123456}, 100, "success"))
+    @patch("apps.payments.services.requests.post")
+    def test_successful_payment_after_grace_does_not_activate_order(self, post, parse_response, select_related, lock_order, lock_payment, atomic, get_shipment, get_invoice):
+        self.payment.status = Payment.PaymentStatus.PENDING
+        self.payment.created_at = timezone.now() - timedelta(hours=2)
+        self.order.status = Payment.order.field.related_model.OrderStatus.PENDING
+        self.order.expires_at = timezone.now() - timedelta(minutes=15)
+        select_related.return_value.get.return_value = self.payment
+        lock_order.return_value.get.return_value = self.order
+        lock_payment.return_value.get.return_value = self.payment
+        post.return_value.raise_for_status.return_value = None
+        post.return_value.json.return_value = {}
+        get_invoice.return_value = (MagicMock(), False)
+        result = ZarinpalService.verify_payment(self.payment.pk, "authority")
+        self.assertEqual(result.status, Payment.PaymentStatus.SUCCESS)
+        self.assertEqual(self.order.status, Payment.order.field.related_model.OrderStatus.PENDING)
         get_shipment.assert_not_called()
         get_invoice.assert_not_called()
 
@@ -186,6 +218,8 @@ class RequestPaymentTests(TestCase):
         post.return_value.json.return_value = {
             "data": {"code": 100, "authority": "AUTH_TEST_123"}
         }
+        self.order.shipping_amount = Decimal(25000)
+        self.order.save(update_fields=["shipping_amount", "updated_at"])
         payment, pay_url = ZarinpalService.request_payment(self.order)
         self.assertEqual(payment.status, Payment.PaymentStatus.PENDING)
         self.assertEqual(payment.transaction_id, "AUTH_TEST_123")
@@ -421,8 +455,9 @@ class PaymentViewsTests(APITestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIn("status=failed", response.url)
 
+    @patch("apps.payments.views.ZarinpalService.resolve_abandoned_payment")
     @patch("apps.payments.views.ZarinpalService.verify_payment")
-    def test_payment_callback_with_failed_gateway_status_does_not_verify(self, verify_payment):
+    def test_payment_callback_with_failed_gateway_status_does_not_verify(self, verify_payment, resolve_abandoned):
         response = self.client.get(
             self.callback_url,
             {
@@ -435,6 +470,7 @@ class PaymentViewsTests(APITestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIn("status=failed", response.url)
         verify_payment.assert_not_called()
+        resolve_abandoned.assert_called_once()
 
     def test_payment_request_rejects_another_users_order(self):
         other_user = CustomUser.objects.create_user(phone_number="09123456780")
@@ -755,15 +791,60 @@ class PaymentCallbackFlowTests(APITestCase):
         self.assertEqual(Shipment.objects.filter(order=self.order).count(), 1)
 
     @patch("apps.payments.services.requests.post")
-    def test_success_for_expired_pending_order_redirects_to_review(self, post):
+    def test_success_for_expired_order_within_grace_redirects_to_success(self, post):
         Order.objects.filter(pk=self.order.pk).update(expires_at=timezone.now() - timedelta(minutes=15))
         post.return_value.json.return_value = {"data": {"code": 100, "ref_id": "REF_EXPIRED_1"}}
         response = self.call_callback()
-        self.assertIn("status=review", response.url)
-        self.assertNotIn("status=success", response.url)
+        self.assertIn("status=success", response.url)
         self.order.refresh_from_db()
         self.payment.refresh_from_db()
         self.assertEqual(self.payment.status, Payment.PaymentStatus.SUCCESS)
+        self.assertEqual(self.order.status, Order.OrderStatus.PROCESSING)
+        self.assertTrue(Invoice.objects.filter(order=self.order).exists())
+        self.assertTrue(Shipment.objects.filter(order=self.order).exists())
+
+    @patch("apps.payments.services.requests.post")
+    def test_success_for_expired_order_after_grace_redirects_to_review(self, post):
+        Order.objects.filter(pk=self.order.pk).update(expires_at=timezone.now() - timedelta(minutes=15))
+        Payment.objects.filter(pk=self.payment.pk).update(created_at=timezone.now() - timedelta(hours=2))
+        post.return_value.json.return_value = {"data": {"code": 100, "ref_id": "REF_EXPIRED_2"}}
+        response = self.call_callback()
+        self.assertIn("status=review", response.url)
+        self.order.refresh_from_db()
         self.assertEqual(self.order.status, Order.OrderStatus.PENDING)
         self.assertFalse(Invoice.objects.filter(order=self.order).exists())
         self.assertFalse(Shipment.objects.filter(order=self.order).exists())
+
+    @patch("apps.payments.services.requests.post")
+    def test_failed_gateway_status_but_inquiry_confirms_payment(self, post):
+        post.side_effect = [
+            MagicMock(
+                json=MagicMock(return_value={"data": {"status": "PAID"}}),
+                raise_for_status=MagicMock(),
+            ),
+            MagicMock(
+                json=MagicMock(return_value={
+                    "data": {"code": 100, "ref_id": "REF_NOK_PAID"}
+                }),
+                raise_for_status=MagicMock(),
+            ),
+        ]
+        response = self.call_callback(gateway_status="NOK")
+        self.assertIn("status=success", response.url)
+        self.assertIn("tracking_code=REF_NOK_PAID", response.url)
+        self.payment.refresh_from_db()
+        self.order.refresh_from_db()
+        self.assertEqual(self.payment.status, Payment.PaymentStatus.SUCCESS)
+        self.assertEqual(self.order.status, Order.OrderStatus.PROCESSING)
+        self.assertEqual(post.call_count, 2)
+
+    @patch("apps.payments.services.requests.post")
+    def test_failed_gateway_status_with_unknown_inquiry_redirects_to_pending(self, post):
+        post.return_value.json.return_value = {
+            "data": {"status": "IN_BANK"}
+        }
+        response = self.call_callback(gateway_status="NOK")
+        self.assertIn("status=pending", response.url)
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.status, Payment.PaymentStatus.PENDING)
+        post.assert_called_once()

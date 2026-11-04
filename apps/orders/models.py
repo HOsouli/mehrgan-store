@@ -7,6 +7,7 @@ from apps.discounts.models import Discount
 from django.core.validators import MinValueValidator, RegexValidator
 from django.db.models.expressions import RawSQL
 from django.db.models import Q
+from datetime import timedelta
 
 
 
@@ -21,6 +22,8 @@ class Order(models.Model):
         SHIPPED = "shipped", "ارسال شده"
         DELIVERED = "delivered", "تحویل داده شده"
         CANCELLED = "cancelled", "لغو شده"
+
+    PAYMENT_GRACE = timedelta(hours=1)
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False, verbose_name="شناسه")
     user = models.ForeignKey(CustomUser, on_delete=models.PROTECT, related_name="orders", verbose_name="کاربر")

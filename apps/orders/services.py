@@ -9,7 +9,6 @@ from apps.payments.models import Payment
 from .models import Order, OrderItem, OrderAddress
 from apps.cart.services import CartService
 from django.db.models import Q
-from datetime import timedelta
 
 
 class OrderService:
@@ -52,8 +51,7 @@ class OrderService:
     @staticmethod
     def _get_automatic_discount(user, line_items, subtotal, now):
         discounts = (
-            Discount.objects.select_for_update(of=("self",))
-            .filter(
+            Discount.objects.filter(
                 Q(code__isnull=True) | Q(code=""),
                 is_active=True,
                 starts_at__lte=now,
@@ -145,6 +143,8 @@ class OrderService:
                 subtotal=subtotal,
                 now=now,
             )
+            if discount:
+                discount = Discount.objects.select_for_update().get(pk=discount.pk)
 
         # Shared logic for validation and calculation
         if discount:
@@ -194,7 +194,7 @@ class OrderService:
             if discount.target_type != Discount.TargetType.ORDER and discount_amount == 0:
                 raise ValidationError("این تخفیف شامل محصولات سبد خرید شما نمی‌شود.")
             discount_amount = min(discount_amount, subtotal)
-        shipping_amount = Decimal("0")
+        shipping_amount = Decimal(0)
         total_amount = subtotal - discount_amount + shipping_amount
         order = Order.objects.create(
             user=user,
@@ -231,13 +231,12 @@ class OrderService:
         CartService.clear_cart(user=user)
         return order
 
-    PAYMENT_GRACE = timedelta(hours=1)
     @staticmethod
     def _inflight_payments(now):
         return Payment.objects.filter(
             status=Payment.PaymentStatus.PENDING,
             transaction_id__isnull=False,
-            created_at__gte=now - OrderService.PAYMENT_GRACE,
+            created_at__gte=now - Order.PAYMENT_GRACE,
         ).exclude(transaction_id="")
 
     @staticmethod

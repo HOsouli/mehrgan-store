@@ -7,6 +7,8 @@ from .models import Order
 from .services import OrderService
 from apps.catalog.models import Product, Category, Brand
 from apps.discounts.models import Discount, CouponUsage
+from django.test import override_settings
+from decimal import Decimal
 
 
 class CancelExpiredOrdersTests(TestCase):
