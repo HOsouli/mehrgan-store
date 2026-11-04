@@ -12,10 +12,11 @@ def sync_invoice_shipping(order_id, shipping_cost, method, carrier):
     invoice = Invoice.objects.select_for_update().filter(order_id=order_id).first()
     if not invoice:
         return
-    is_store_courier = method == Shipment.ShipmentMethod.COURIER and carrier.strip() == "پیک فروشگاه"
+    carrier = (carrier or "").strip()
+    is_store_courier = (method == Shipment.ShipmentMethod.COURIER and carrier == "پیک فروشگاه")
     shipping_amount = shipping_cost if is_store_courier else Decimal(0)
     invoice.shipping_amount = shipping_amount
-    invoice.total_amount = (invoice.subtotal - invoice.discount_amount + shipping_amount)
+    invoice.total_amount = invoice.subtotal - invoice.discount_amount + shipping_amount
     invoice.save(update_fields=["shipping_amount", "total_amount", "updated_at"])
 
 @transaction.atomic
