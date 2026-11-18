@@ -8,5 +8,3 @@ class CustomUserAdmin(admin.ModelAdmin):
     list_filter = ("is_verified", "is_active", "is_staff",)
     ordering = ("-date_joined",)
     readonly_fields = ("id", "date_joined")
-
-

@@ -232,12 +232,8 @@ class OrderService:
         return order
 
     @staticmethod
-    def _inflight_payments(now):
-        return Payment.objects.filter(
-            status=Payment.PaymentStatus.PENDING,
-            transaction_id__isnull=False,
-            created_at__gte=now - Order.PAYMENT_GRACE,
-        ).exclude(transaction_id="")
+    def _inflight_payments():
+        return Payment.objects.filter(status=Payment.PaymentStatus.PENDING)
 
     @staticmethod
     def cancel_expired_orders(batch_size=200):
@@ -257,8 +253,7 @@ class OrderService:
                     continue
                 if order.payments.filter(status=Payment.PaymentStatus.SUCCESS).exists():
                     continue
-                # پرداخت در حال بررسی: تا مشخص شدن نتیجه، سفارش لغو نشود.
-                if OrderService._inflight_payments(timezone.now()).filter(order_id=order.pk).exists():
+                if OrderService._inflight_payments().filter(order_id=order.pk, created_at__gt=now - Order.PAYMENT_GRACE).exists():
                     continue
                 for item in order.items.order_by("product_id"):
                     product = Product.objects.select_for_update().get(id=item.product_id)

@@ -26,7 +26,7 @@ class Discount(models.Model):
     discount_type = models.CharField(max_length=20, choices=DiscountType.choices, verbose_name="نوع تخفیف")
     value = models.DecimalField(
         max_digits=12, decimal_places=0, verbose_name="مقدار تخفیف",
-        help_text="برای تخفیف درصدی فقط عدد وارد کنید (مثال: 20)؛ برای تخفیف مبلغ ثابت، مبلغ را به ریال وارد کنید (مثال: 500000).",
+        help_text="برای تخفیف درصدی فقط عدد وارد کنید (مثال: 20)؛ برای تخفیف مبلغ ثابت، مبلغ را به تومان وارد کنید (مثال: 50000).",
     )
     target_type = models.CharField(max_length=20, choices=TargetType.choices, verbose_name="محدوده تخفیف")
     products = models.ManyToManyField(Product, blank=True, related_name="discounts", verbose_name="محصولات")
@@ -35,7 +35,7 @@ class Discount(models.Model):
     eligible_users = models.ManyToManyField(CustomUser, blank=True, related_name="discounts", verbose_name="کاربران مجاز")
     minimum_order_amount = models.DecimalField(
         max_digits=12, decimal_places=0, blank=True, null=True, verbose_name="حداقل مبلغ کل سبد",
-        help_text="مبلغ را به ریال وارد کنید. مثال: 1000000",
+        help_text="مبلغ را به تومان وارد کنید. مثال: 100000",
     )
     total_usage_limit = models.PositiveIntegerField(blank=True, null=True, verbose_name="سقف استفاده کل")
     per_user_limit = models.PositiveIntegerField(blank=True, null=True, verbose_name="سقف استفاده هر کاربر")

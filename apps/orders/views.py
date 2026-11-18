@@ -54,4 +54,3 @@ class OrderDetailView(APIView):
         )
         serializer = OrderDetailSerializer(order)
         return Response(serializer.data)
-

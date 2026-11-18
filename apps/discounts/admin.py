@@ -34,7 +34,7 @@ class DiscountAdmin(admin.ModelAdmin):
     def display_value(self, obj):
         if obj.discount_type == Discount.DiscountType.PERCENTAGE:
             return f"{obj.value:,}٪"
-        return f"{obj.value:,} ریال"
+        return f"{obj.value:,} تومان"
 
     @admin.action(description="فعال کردن تخفیف‌های انتخاب‌شده")
     def activate(self, request, queryset):

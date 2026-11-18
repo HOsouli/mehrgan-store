@@ -13,14 +13,21 @@ class Payment(models.Model):
         FAILED = "failed", "ناموفق"
         CANCELLED = "cancelled", "لغو شده"
 
+    class RequestState(models.TextChoices):
+        SUBMITTING = "submitting", "در حال ارسال درخواست"
+        ACCEPTED = "accepted", "پذیرفته‌شده توسط زیبال"
+        UNKNOWN = "unknown", "نتیجه نامشخص"
+        REJECTED = "rejected", "ردشده توسط زیبال"
+
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False, verbose_name="شناسه")
     order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="payments", verbose_name="سفارش")
-    amount = models.DecimalField(max_digits=12, decimal_places=0, verbose_name="مبلغ پرداخت")
+    amount = models.DecimalField(max_digits=12, decimal_places=0, verbose_name="مبلغ پرداخت (تومان)")
     status = models.CharField(max_length=20, choices=PaymentStatus.choices, default=PaymentStatus.PENDING, verbose_name="وضعیت پرداخت")
+    request_state = models.CharField(max_length=20, choices=RequestState.choices, default=RequestState.SUBMITTING, verbose_name="وضعیت درخواست درگاه")
     gateway = models.CharField(max_length=50, verbose_name="درگاه پرداخت")
     transaction_id = models.CharField(max_length=100, blank=True, null=True, unique=True, verbose_name="شناسه تراکنش")
     tracking_code = models.CharField(max_length=100, blank=True, null=True, unique=True, verbose_name="کد رهگیری")
-    gateway_response_code = models.CharField(max_length=10, blank=True, verbose_name="کد پاسخ درگاه")
+    gateway_response_code = models.CharField(max_length=30, blank=True, verbose_name="کد پاسخ درگاه")
     gateway_response_message = models.CharField(max_length=255, blank=True, verbose_name="پیام پاسخ درگاه")
     paid_at = models.DateTimeField(null=True, blank=True, verbose_name="زمان پرداخت")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="تاریخ ایجاد")
@@ -60,6 +67,10 @@ class Payment(models.Model):
                 fields=("order",),
                 condition=Q(status="success"),
                 name="unique_success_payment_per_order",
+            ),
+            models.CheckConstraint(
+                condition=Q(amount__gt=0),
+                name="payment_amount_positive",
             ),
         ]
 

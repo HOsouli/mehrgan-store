@@ -8,4 +8,3 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         count = OrderService.cancel_expired_orders()
         self.stdout.write(self.style.SUCCESS(f"{count} سفارش منقضی لغو شد."))
-

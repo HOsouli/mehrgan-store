@@ -1,6 +1,7 @@
 from uuid import uuid4
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q
 from apps.orders.models import Order
 
 
@@ -59,6 +60,32 @@ class Shipment(models.Model):
         verbose_name = "مرسوله"
         verbose_name_plural = "مرسوله‌ها"
         ordering = ("-created_at",)
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(shipping_cost__gte=0),
+                name="shipment_shipping_cost_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~Q(status="shipped")
+                    | (
+                        Q(tracking_code__gt="")
+                        & Q(shipped_at__isnull=False)
+                    )
+                ),
+                name="shipment_shipped_requires_tracking_and_date",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~Q(status="delivered")
+                    | (
+                        Q(shipped_at__isnull=False)
+                        & Q(delivered_at__isnull=False)
+                    )
+                ),
+                name="shipment_delivered_requires_dates",
+            ),
+        ]
 
     def __str__(self):
         return f"شماره سفارش: {self.order.order_number} - {self.get_status_display()}"

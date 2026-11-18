@@ -26,7 +26,7 @@ class CancelExpiredOrdersTests(TestCase):
     def test_order_with_unresolved_payment_is_not_cancelled(self):
         order = self._expired_order()
         Payment.objects.create(
-            order=order, amount=1000, gateway="zarinpal",
+            order=order, amount=1000, gateway="zibal",
             status=Payment.PaymentStatus.PENDING, transaction_id="A1",
         )
         OrderService.cancel_expired_orders()
@@ -44,7 +44,7 @@ class CancelExpiredOrdersTests(TestCase):
         payment = Payment.objects.create(
             order=order,
             amount=1000,
-            gateway="zarinpal",
+            gateway="zibal",
             status=Payment.PaymentStatus.PENDING,
             transaction_id="A2",
         )
@@ -64,7 +64,7 @@ class CancelExpiredOrdersTests(TestCase):
         Payment.objects.create(
             order=order,
             amount=1000,
-            gateway="zarinpal",
+            gateway="zibal",
             status=Payment.PaymentStatus.SUCCESS,
             transaction_id="A3",
             tracking_code="REF_A3",

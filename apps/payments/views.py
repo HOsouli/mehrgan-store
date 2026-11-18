@@ -1,4 +1,3 @@
-
 from django.shortcuts import redirect
 from django.conf import settings
 from rest_framework import status
@@ -7,12 +6,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema
 from apps.orders.models import Order
-from .serializers import PaymentRequestSerializer
-from .services import ZarinpalService
+from .serializers import PaymentRequestSerializer, PaymentRequestResponseSerializer
+from .services import ZibalService
 from rest_framework.exceptions import ValidationError
 import logging
 from uuid import UUID
 from .models import Payment
+from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +22,9 @@ class PaymentRequestView(APIView):
 
     @extend_schema(
         summary="Request Payment",
-        description="Start a Zarinpal payment for an existing order and return the redirect URL.",
+        description="Start a Zibal payment for an existing order and return the redirect URL.",
         request=PaymentRequestSerializer,
+        responses={200: PaymentRequestResponseSerializer},
     )
     def post(self, request):
         serializer = PaymentRequestSerializer(data=request.data)
@@ -33,7 +34,7 @@ class PaymentRequestView(APIView):
             order = Order.objects.select_related("address").get(id=order_id, user=request.user)
         except Order.DoesNotExist:
             return Response({"detail": "سفارش یافت نشد."}, status=status.HTTP_404_NOT_FOUND)
-        payment, pay_url = ZarinpalService.request_payment(order)
+        payment, pay_url = ZibalService.request_payment(order)
         return Response({"payment_id": payment.id, "pay_url": pay_url,})
 
 
@@ -42,13 +43,12 @@ class PaymentCallbackView(APIView):
 
     @extend_schema(
         summary="Payment Callback",
-        description="Zarinpal redirects the user's browser here after payment. Verifies the transaction and redirects to the frontend result page.",
+        description="Zibal redirects the user's browser here after payment. Verifies the transaction and redirects to the frontend result page.",
     )
 
     def get(self, request):
         payment_id = request.query_params.get("payment_id")
-        authority = request.query_params.get("Authority")
-        gateway_status = request.query_params.get("Status")
+        track_id = request.query_params.get("trackId")
         result_url = f"{settings.FRONTEND_URL}/payment-result"
         failed_url = f"{result_url}?status=failed"
         pending_url = f"{result_url}?status=pending"
@@ -56,18 +56,15 @@ class PaymentCallbackView(APIView):
             payment_uuid = UUID(payment_id)
         except (TypeError, ValueError):
             return redirect(failed_url)
-        if not authority:
-            return redirect(f"{failed_url}&payment_id={payment_uuid}")
+        if not track_id:
+            return redirect(f"{pending_url}&payment_id={payment_uuid}")
         try:
-            if gateway_status != "OK":
-                ZarinpalService.resolve_abandoned_payment(payment_uuid, authority)
-            else:
-                ZarinpalService.verify_payment(payment_id=payment_uuid, authority=authority)
+            ZibalService.verify_payment(payment_id=payment_uuid, track_id=track_id)
         except ValidationError as exc:
             logger.warning("بررسی پرداخت %s ناموفق بود: %s", payment_uuid, exc.detail)
         except Exception:
             logger.exception("خطای غیرمنتظره در بررسی پرداخت %s", payment_uuid)
-        payment = Payment.objects.select_related("order").filter(pk=payment_uuid, transaction_id=authority,).first()
+        payment = Payment.objects.select_related("order").filter(pk=payment_uuid, transaction_id=track_id,).first()
         if payment is None or payment.status == Payment.PaymentStatus.FAILED:
             return redirect(f"{failed_url}&payment_id={payment_uuid}")
         if payment.status in (
@@ -84,10 +81,12 @@ class PaymentCallbackView(APIView):
         ):
             return redirect(f"{result_url}?status=review&payment_id={payment_uuid}")
         return redirect(
-            f"{result_url}?status=success"
-            f"&order_id={payment.order_id}"
-            f"&order_number={payment.order.order_number}"
-            f"&tracking_code={payment.tracking_code}"
+            f"{result_url}?{urlencode({
+                'status': 'success',
+                'order_id': payment.order_id,
+                'order_number': payment.order.order_number,
+                'tracking_code': payment.tracking_code or '',
+            })}"
         )
 
 

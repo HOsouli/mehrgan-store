@@ -34,10 +34,10 @@ class Order(models.Model):
         verbose_name="شماره سفارش"
     )
     status = models.CharField( max_length=20, choices=OrderStatus.choices, default=OrderStatus.PENDING, verbose_name="وضعیت سفارش")
-    subtotal = models.DecimalField(max_digits=12, decimal_places=0, verbose_name="مبلغ کالاها")
-    discount_amount = models.DecimalField(max_digits=12, decimal_places=0, default=0, verbose_name="مبلغ تخفیف")
-    shipping_amount = models.DecimalField(max_digits=12, decimal_places=0, default=0, verbose_name="هزینه ارسال")
-    total_amount = models.DecimalField(max_digits=12, decimal_places=0, verbose_name="مبلغ نهایی")
+    subtotal = models.DecimalField(max_digits=12, decimal_places=0, verbose_name="مبلغ کالاها (تومان)")
+    discount_amount = models.DecimalField(max_digits=12, decimal_places=0, default=0, verbose_name="مبلغ تخفیف (تومان)")
+    shipping_amount = models.DecimalField(max_digits=12, decimal_places=0, default=0, verbose_name="هزینه ارسال (تومان)")
+    total_amount = models.DecimalField(max_digits=12, decimal_places=0, verbose_name="مبلغ نهایی (تومان)")
     delivery_date = models.DateField(null=True, blank=True, verbose_name="تاریخ تحویل")
     discount = models.ForeignKey(Discount, on_delete=models.SET_NULL, null=True, blank=True, related_name="orders", verbose_name="تخفیف")
     expires_at = models.DateTimeField(verbose_name="زمان انقضای سفارش")
@@ -90,9 +90,9 @@ class OrderItem(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items", verbose_name="سفارش")
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="order_items", verbose_name="محصول")
     quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)], verbose_name="تعداد")
-    unit_price = models.DecimalField(max_digits=12, decimal_places=0, verbose_name="قیمت واحد در زمان سفارش")
-    discount_amount = models.DecimalField(max_digits=12, decimal_places=0, default=0, verbose_name="مبلغ تخفیف")
-    total_price = models.DecimalField( max_digits=12, decimal_places=0, verbose_name="مبلغ نهایی آیتم")
+    unit_price = models.DecimalField(max_digits=12, decimal_places=0, verbose_name="قیمت واحد در زمان سفارش (تومان)")
+    discount_amount = models.DecimalField(max_digits=12, decimal_places=0, default=0, verbose_name="مبلغ تخفیف (تومان)")
+    total_price = models.DecimalField( max_digits=12, decimal_places=0, verbose_name="مبلغ نهایی آیتم (تومان)")
 
     def clean(self):
         super().clean()

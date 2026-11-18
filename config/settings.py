@@ -225,10 +225,12 @@ SMSIR_TEMPLATE_ID = os.getenv("SMSIR_TEMPLATE_ID")
 SMSIR_VERIFY_URL = "https://api.sms.ir/v1/send/verify"
 SMSIR_TIMEOUT = 10
 
-# ---------- Zarinpal ----------
-ZARINPAL_MERCHANT_ID = os.getenv("ZARINPAL_MERCHANT_ID", "").strip()
-ZARINPAL_SANDBOX = os.getenv("ZARINPAL_SANDBOX", "False").strip().lower() == "true"
-if not DEBUG and not ZARINPAL_MERCHANT_ID:
-    raise ImproperlyConfigured("ZARINPAL_MERCHANT_ID تنظیم نشده است.")
-ZARINPAL_CALLBACK_URL = os.getenv("ZARINPAL_CALLBACK_URL", "http://127.0.0.1:8000/api/payments/callback/")
+# ---------- Zibal ----------
+ZIBAL_MERCHANT_ID = os.getenv("ZIBAL_MERCHANT_ID", "").strip()
+if not DEBUG and not ZIBAL_MERCHANT_ID:
+    raise ImproperlyConfigured("ZIBAL_MERCHANT_ID تنظیم نشده است.")
+ZIBAL_CALLBACK_URL = os.getenv(
+    "ZIBAL_CALLBACK_URL",
+    "http://127.0.0.1:8000/api/payments/callback/"
+)
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
