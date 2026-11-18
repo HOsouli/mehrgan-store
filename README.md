@@ -377,15 +377,6 @@ The implemented system has been verified through:
 - OpenAPI / Swagger documentation
 - Production deployment
 
-### Next Steps
-
-- Final production payment and SMS provider integration testing
-- Expanded automated test coverage
-- Frontend integration and end-to-end testing
-- Production monitoring and observability
-- Extended shipment and invoice workflows
-- Torob integration
-
 ## Development Philosophy
 
 > Keep the architecture clean, keep business rules on the server, protect data integrity, and add complexity only when the business requires it.
