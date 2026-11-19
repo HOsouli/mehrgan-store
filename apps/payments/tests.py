@@ -58,7 +58,7 @@ class RequestPaymentTests(TestCase):
         payload = post.call_args.kwargs["json"]
         self.assertEqual(payload["merchant"], "test-merchant")
         self.assertEqual(payload["amount"], 1000000)
-        self.assertEqual(payload["orderId"], str(self.order.order_number))
+        self.assertEqual(payload["orderId"], str(payment.pk))
         self.assertIn("payment_id=", payload["callbackUrl"])
 
     @patch("apps.payments.services.settings.ZIBAL_MERCHANT_ID", "test-merchant")
@@ -148,7 +148,7 @@ class VerifyPaymentDatabaseTests(TestCase):
             "result": 100,
             "status": 1,
             "amount": 1000000,
-            "orderId": str(self.order.order_number),
+            "orderId": str(self.payment.pk),
             "paidAt": timezone.now().isoformat(),
             "refNumber": "REF_CANCELLED_123",
             "message": "Success",
@@ -172,7 +172,7 @@ class VerifyPaymentDatabaseTests(TestCase):
             "result": 100,
             "status": 1,
             "amount": 1000000,
-            "orderId": str(self.order.order_number),
+            "orderId": str(self.payment.pk),
             "paidAt": timezone.now().isoformat(),
             "refNumber": "REF_LATE_SUCCESS_123",
             "message": "Success",
@@ -207,7 +207,7 @@ class VerifyPaymentDatabaseTests(TestCase):
             "result": 100,
             "status": 1,
             "amount": 1000000,
-            "orderId": str(self.order.order_number),
+            "orderId": str(self.payment.pk),
             "paidAt": timezone.now().isoformat(),
             "refNumber": "REF_RETRY_123",
             "message": "Success",
@@ -375,7 +375,7 @@ class VerifyPaymentFailureAfterTests(TestCase):
                     "result": 100,
                     "status": 1,
                     "amount": 1000000,
-                    "orderId": str(self.order.order_number),
+                    "orderId": str(self.payment.pk),
                     "paidAt": timezone.now().isoformat(),
                     "refNumber": "REF_201_SUCCESS",
                     "message": "Success",
@@ -398,7 +398,7 @@ class VerifyPaymentFailureAfterTests(TestCase):
         invalid_responses = [
             {
                 "amount": 999999,
-                "orderId": str(self.order.order_number),
+                "orderId": str(self.payment.pk),
                 "refNumber": "REF_INVALID_AMOUNT",
             },
             {
@@ -408,7 +408,7 @@ class VerifyPaymentFailureAfterTests(TestCase):
             },
             {
                 "amount": 1000000,
-                "orderId": str(self.order.order_number),
+                "orderId": str(self.payment.pk),
                 "refNumber": "",
             },
         ]
@@ -450,7 +450,7 @@ class VerifyPaymentFailureAfterTests(TestCase):
                 "result": 100,
                 "status": 1,
                 "amount": 1000000,
-                "orderId": str(self.order.order_number),
+                "orderId": str(self.payment.pk),
                 "paidAt": "invalid-date",
                 "refNumber": "REF_INVALID_DATE",
                 "message": "Success",
@@ -575,7 +575,10 @@ class PaymentViewsTests(APITestCase):
         with patch("apps.payments.views.ZibalService.verify_payment") as verify_payment:
             response = self.client.get(
                 self.callback_url,
-                {"payment_id": str(payment.pk)},
+                {
+                    "payment_id": str(payment.pk),
+                    "orderId": str(payment.pk),
+                },
                 secure=True,
             )
         self.assertEqual(response.status_code, 302)
@@ -623,6 +626,7 @@ class PaymentViewsTests(APITestCase):
             self.callback_url,
             {
                 "payment_id": str(payment.pk),
+                "orderId": str(payment.pk),
                 "trackId": "123456789",
                 "Status": "OK",
             },
@@ -671,7 +675,7 @@ class PaymentRecoveryTaskTests(TestCase):
             "result": 100,
             "status": 1,
             "amount": 1000000,
-            "orderId": str(self.order.order_number),
+            "orderId": str(self.payment.pk),
             "paidAt": timezone.now().isoformat(),
             "refNumber": "REF_RECOVERY_1",
             "message": "Success",
@@ -711,7 +715,7 @@ class PaymentRecoveryTaskTests(TestCase):
             "result": 100,
             "status": 1,
             "amount": 1000000,
-            "orderId": str(self.order.order_number),
+            "orderId": str(self.payment.pk),
             "paidAt": timezone.now().isoformat(),
             "refNumber": "REF_LATE_1",
             "message": "Success",
@@ -863,6 +867,7 @@ class PaymentCallbackFlowTests(APITestCase):
             {
                 "payment_id": str(self.payment.pk),
                 "trackId": track_id,
+                "orderId": str(self.payment.pk),
                 "Status": gateway_status,
             },
             secure=True,
@@ -871,7 +876,7 @@ class PaymentCallbackFlowTests(APITestCase):
     @patch("apps.payments.services.requests.post")
     def test_wrong_track_id_redirects_to_failure_without_gateway_call(self, post):
         response = self.call_callback(track_id="999999")
-        self.assertIn("status=failed", response.url)
+        self.assertIn("status=review", response.url)
         post.assert_not_called()
         self.payment.refresh_from_db()
         self.assertEqual(self.payment.status, Payment.PaymentStatus.PENDING)
@@ -882,7 +887,7 @@ class PaymentCallbackFlowTests(APITestCase):
             "result": 100,
             "status": 1,
             "amount": 1000000,
-            "orderId": str(self.order.order_number),
+            "orderId": str(self.payment.pk),
             "paidAt": timezone.now().isoformat(),
             "refNumber": "REF_CB_1",
             "message": "Success",
@@ -915,7 +920,7 @@ class PaymentCallbackFlowTests(APITestCase):
             "result": 100,
             "status": 1,
             "amount": 1000000,
-            "orderId": str(self.order.order_number),
+            "orderId": str(self.payment.pk),
             "paidAt": timezone.now().isoformat(),
             "refNumber": "REF_CB_2",
             "message": "Success",
@@ -932,7 +937,7 @@ class PaymentCallbackFlowTests(APITestCase):
             "result": 100,
             "status": 1,
             "amount": 1000000,
-            "orderId": str(self.order.order_number),
+            "orderId": str(self.payment.pk),
             "paidAt": timezone.now().isoformat(),
             "refNumber": "REF_CB_3",
             "message": "Success",
@@ -952,7 +957,7 @@ class PaymentCallbackFlowTests(APITestCase):
             "result": 100,
             "status": 1,
             "amount": 1000000,
-            "orderId": str(self.order.order_number),
+            "orderId": str(self.payment.pk),
             "paidAt": timezone.now().isoformat(),
             "refNumber": "REF_EXPIRED_1",
             "message": "Success",
@@ -974,7 +979,7 @@ class PaymentCallbackFlowTests(APITestCase):
             "result": 100,
             "status": 1,
             "amount": 1000000,
-            "orderId": str(self.order.order_number),
+            "orderId": str(self.payment.pk),
             "paidAt": timezone.now().isoformat(),
             "refNumber": "REF_EXPIRED_2",
             "message": "Success",
@@ -992,7 +997,7 @@ class PaymentCallbackFlowTests(APITestCase):
             "result": 100,
             "status": 1,
             "amount": 1000000,
-            "orderId": str(self.order.order_number),
+            "orderId": str(self.payment.pk),
             "paidAt": timezone.now().isoformat(),
             "refNumber": "REF_NOK_PAID",
             "message": "Success",

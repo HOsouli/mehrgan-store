@@ -253,7 +253,7 @@ class OrderService:
                     continue
                 if order.payments.filter(status=Payment.PaymentStatus.SUCCESS).exists():
                     continue
-                if OrderService._inflight_payments().filter(order_id=order.pk, created_at__gt=now - Order.PAYMENT_GRACE).exists():
+                if OrderService._inflight_payments().filter(order_id=order.pk).exists():
                     continue
                 for item in order.items.order_by("product_id"):
                     product = Product.objects.select_for_update().get(id=item.product_id)

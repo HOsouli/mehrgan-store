@@ -7,4 +7,5 @@ class PaymentRequestSerializer(serializers.Serializer):
 
 class PaymentRequestResponseSerializer(serializers.Serializer):
     payment_id = serializers.UUIDField()
-    pay_url = serializers.CharField()
+    status = serializers.ChoiceField(choices=("pending", "success", "review"))
+    pay_url = serializers.CharField(allow_null=True,required=False)

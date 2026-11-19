@@ -13,6 +13,8 @@ import logging
 from uuid import UUID
 from .models import Payment
 from urllib.parse import urlencode
+from django.db import transaction, IntegrityError
+
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,25 @@ class PaymentRequestView(APIView):
         except Order.DoesNotExist:
             return Response({"detail": "سفارش یافت نشد."}, status=status.HTTP_404_NOT_FOUND)
         payment, pay_url = ZibalService.request_payment(order)
-        return Response({"payment_id": payment.id, "pay_url": pay_url,})
+        if payment.status == Payment.PaymentStatus.SUCCESS:
+            payment.refresh_from_db()
+            payment.order.refresh_from_db()
+            payment_status = (
+                "success"
+                if payment.order.status in (
+                    Order.OrderStatus.PROCESSING,
+                    Order.OrderStatus.SHIPPED,
+                    Order.OrderStatus.DELIVERED,
+                )
+                else "review"
+            )
+        else:
+            payment_status = "pending"
+        return Response({
+            "payment_id": payment.id,
+            "status": payment_status,
+            "pay_url": pay_url,
+        })
 
 
 class PaymentCallbackView(APIView):
@@ -43,12 +63,16 @@ class PaymentCallbackView(APIView):
 
     @extend_schema(
         summary="Payment Callback",
-        description="Zibal redirects the user's browser here after payment. Verifies the transaction and redirects to the frontend result page.",
+        description=(
+    "Receives Zibal Standard GET callback, validates payment identifiers, "
+    "verifies the transaction, and redirects to the frontend result page."
+),
     )
 
     def get(self, request):
         payment_id = request.query_params.get("payment_id")
         track_id = request.query_params.get("trackId")
+        callback_order_id = request.query_params.get("orderId")
         result_url = f"{settings.FRONTEND_URL}/payment-result"
         failed_url = f"{result_url}?status=failed"
         pending_url = f"{result_url}?status=pending"
@@ -56,8 +80,25 @@ class PaymentCallbackView(APIView):
             payment_uuid = UUID(payment_id)
         except (TypeError, ValueError):
             return redirect(failed_url)
-        if not track_id:
+        if callback_order_id != str(payment_uuid):
+            logger.warning("Zibal callback orderId mismatch for payment %s", payment_uuid)
+            return redirect(f"{result_url}?status=review&payment_id={payment_uuid}")
+        if not track_id or not track_id.isdigit() or int(track_id) <= 0:
             return redirect(f"{pending_url}&payment_id={payment_uuid}")
+        try:
+            with transaction.atomic():
+                payment = Payment.objects.select_for_update().get(pk=payment_uuid, gateway="zibal")
+                if payment.transaction_id and payment.transaction_id != track_id:
+                    logger.error("Zibal callback trackId mismatch for payment %s", payment_uuid)
+                    return redirect(f"{result_url}?status=review&payment_id={payment_uuid}")
+                if not payment.transaction_id:
+                    payment.transaction_id = track_id
+                    payment.save(update_fields=["transaction_id", "updated_at"])
+        except Payment.DoesNotExist:
+            return redirect(f"{result_url}?status=review&payment_id={payment_uuid}")
+        except IntegrityError:
+            logger.exception("Duplicate Zibal trackId received for payment %s", payment_uuid)
+            return redirect(f"{result_url}?status=review&payment_id={payment_uuid}")
         try:
             ZibalService.verify_payment(payment_id=payment_uuid, track_id=track_id)
         except ValidationError as exc:
@@ -67,18 +108,11 @@ class PaymentCallbackView(APIView):
         payment = Payment.objects.select_related("order").filter(pk=payment_uuid, transaction_id=track_id,).first()
         if payment is None or payment.status == Payment.PaymentStatus.FAILED:
             return redirect(f"{failed_url}&payment_id={payment_uuid}")
-        if payment.status in (
-            Payment.PaymentStatus.PENDING,
-            Payment.PaymentStatus.CANCELLED,
-        ):
+        if payment.status in (Payment.PaymentStatus.PENDING, Payment.PaymentStatus.CANCELLED):
             return redirect(f"{pending_url}&payment_id={payment_uuid}")
         if payment.status != Payment.PaymentStatus.SUCCESS:
             return redirect(f"{failed_url}&payment_id={payment_uuid}")
-        if payment.order.status not in (
-            Order.OrderStatus.PROCESSING,
-            Order.OrderStatus.SHIPPED,
-            Order.OrderStatus.DELIVERED,
-        ):
+        if payment.order.status not in (Order.OrderStatus.PROCESSING, Order.OrderStatus.SHIPPED, Order.OrderStatus.DELIVERED):
             return redirect(f"{result_url}?status=review&payment_id={payment_uuid}")
         return redirect(
             f"{result_url}?{urlencode({

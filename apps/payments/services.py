@@ -15,9 +15,17 @@ from django.utils.dateparse import parse_datetime
 
 logger = logging.getLogger(__name__)
 ZIBAL_API_URL = "https://gateway.zibal.ir/v1"
+ZIBAL_REQUEST_URL = f"{ZIBAL_API_URL}/request"
+ZIBAL_VERIFY_URL = f"{ZIBAL_API_URL}/verify"
+ZIBAL_INQUIRY_URL = f"{ZIBAL_API_URL}/inquiry"
 ZIBAL_START_URL = "https://gateway.zibal.ir/start"
 
-ZIBAL_REQUEST_REJECTED_RESULTS = frozenset({102, 103, 104, 105, 106, 113})
+ZIBAL_REQUEST_REJECTED_RESULTS = frozenset({
+    102, 103, 104, 105, 106,
+    107, 108, 109, 110, 111,
+    112, 113, 114, 115, 116, 118,
+    140, 141,
+})
 ZIBAL_MIN_AMOUNT_RIAL = 1000
 
 class ZibalService:
@@ -55,33 +63,37 @@ class ZibalService:
             payment.save(update_fields=update_fields)
 
     @staticmethod
-    def _update_request_state(
-        payment_id,
-        request_state,
-        message="",
-        code="",
-        status=None,
-        transaction_id=None,
-    ):
+    def _update_request_state(payment_id, request_state, message="", code="", status=None, transaction_id=None):
+        conflict = False
         with transaction.atomic():
             payment = Payment.objects.select_for_update().get(pk=payment_id)
-            if payment.status == Payment.PaymentStatus.SUCCESS:
+            if transaction_id is not None and payment.transaction_id and payment.transaction_id != str(transaction_id):
+                conflict = True
+                payment.request_state = Payment.RequestState.UNKNOWN
+                payment.gateway_response_code = "track_mismatch"
+                payment.gateway_response_message = ("شناسه تراکنش پاسخ Request با شناسه ثبت‌شده مطابقت ندارد.")
+                payment.save(update_fields=["request_state", "gateway_response_code", "gateway_response_message", "updated_at"])
+            elif payment.status == Payment.PaymentStatus.SUCCESS:
                 return payment
-            payment.request_state = request_state
-            update_fields = ["request_state", "updated_at"]
-            if status is not None:
-                payment.status = status
-                update_fields.append("status")
-            if transaction_id is not None:
-                payment.transaction_id = transaction_id
-                update_fields.append("transaction_id")
-            if code:
-                payment.gateway_response_code = str(code)
-                update_fields.append("gateway_response_code")
-            if message:
-                payment.gateway_response_message = str(message)[:255]
-                update_fields.append("gateway_response_message")
-            payment.save(update_fields=update_fields)
+            else:
+                update_fields = ["request_state", "updated_at"]
+                payment.request_state = request_state
+                if transaction_id is not None:
+                    payment.transaction_id = str(transaction_id)
+                    update_fields.append("transaction_id")
+                if status is not None:
+                    payment.status = status
+                    update_fields.append("status")
+                if code:
+                    payment.gateway_response_code = str(code)
+                    update_fields.append("gateway_response_code")
+                if message:
+                    payment.gateway_response_message = str(message)[:255]
+                    update_fields.append("gateway_response_message")
+                payment.save(update_fields=update_fields)
+        if conflict:
+            logger.error("Zibal transaction ID mismatch for payment %s", payment_id)
+            raise ValidationError("شناسه تراکنش با اطلاعات ثبت‌شده مطابقت ندارد.")
         return payment
 
     @staticmethod
@@ -107,7 +119,7 @@ class ZibalService:
             "trackId": normalized_track_id,
         }
         try:
-            response = requests.post(f"{ZIBAL_API_URL}/inquiry", json=payload, timeout=10)
+            response = requests.post(ZIBAL_INQUIRY_URL, json=payload, timeout=10)
             response.raise_for_status()
             data = response.json()
         except (requests.exceptions.RequestException, ValueError) as exc:
@@ -119,7 +131,7 @@ class ZibalService:
             ZibalService._mark_payment_for_review(payment.pk, "پاسخ Inquiry فاقد کد وضعیت معتبر است.")
             raise ValidationError("پاسخ Inquiry معتبر نیست.")
         if result != 100:
-            ZibalService._mark_payment_for_review(payment.pk, message or "استعلام Inquiry موفق نبود.", code=result)
+            ZibalService._mark_payment_for_review(payment.pk, message or "استعلام Inquiry موفق نبود.", code=f"s{result}")
         return result, message, info
 
     @staticmethod
@@ -176,15 +188,11 @@ class ZibalService:
             "amount": amount_rial,
             "callbackUrl": callback_url,
             "description": f"پرداخت سفارش شماره {order.order_number}",
-            "orderId": str(order.order_number),
+            "orderId": str(payment.id),
             "mobile": order.address.recipient_phone,
         }
         try:
-            response = requests.post(
-                f"{ZIBAL_API_URL}/request",
-                json=payload,
-                timeout=10,
-            )
+            response = requests.post(ZIBAL_REQUEST_URL, json=payload, timeout=10)
             response.raise_for_status()
             data = response.json()
         except (requests.exceptions.RequestException, ValueError) as exc:
@@ -195,6 +203,9 @@ class ZibalService:
                 code="req_unknown",
             )
             logger.warning("درخواست پرداخت %s نامشخص ماند: %s", payment.pk, exc)
+            payment, pay_url = ZibalService._get_payment_result(payment.pk)
+            if payment.status == Payment.PaymentStatus.SUCCESS:
+                return payment, None
             raise ValidationError("نتیجه درخواست پرداخت مشخص نیست؛ لطفاً برای بررسی مجدد اقدام کنید.") from exc
         result, message, info = ZibalService._parse_response(data)
         if result is None:
@@ -204,6 +215,9 @@ class ZibalService:
                 message="پاسخ درخواست پرداخت فاقد کد وضعیت معتبر است.",
                 code="req_unknown",
             )
+            payment, pay_url = ZibalService._get_payment_result(payment.pk)
+            if payment.status == Payment.PaymentStatus.SUCCESS:
+                return payment, None
             raise ValidationError("پاسخ درگاه معتبر نیست؛ نتیجه پرداخت نیاز به بررسی دارد.")
         if result != 100:
             if result in ZIBAL_REQUEST_REJECTED_RESULTS:
@@ -214,15 +228,19 @@ class ZibalService:
                     code=result,
                     status=Payment.PaymentStatus.FAILED,
                 )
-                raise ValidationError(
-                    "درگاه پرداخت درخواست را نپذیرفت؛ لطفاً دوباره تلاش کنید."
-                )
+                payment, pay_url = ZibalService._get_payment_result(payment.pk)
+                if payment.status == Payment.PaymentStatus.SUCCESS:
+                    return payment, None
+                raise ValidationError("درگاه پرداخت درخواست را نپذیرفت؛ لطفاً دوباره تلاش کنید.")
             ZibalService._update_request_state(
                 payment.pk,
                 Payment.RequestState.UNKNOWN,
                 message=message or "کد پاسخ درخواست پرداخت ناشناخته است.",
                 code=result,
             )
+            payment, pay_url = ZibalService._get_payment_result(payment.pk)
+            if payment.status == Payment.PaymentStatus.SUCCESS:
+                return payment, None
             raise ValidationError("پاسخ درگاه مشخص نیست؛ پرداخت نیاز به بررسی دارد.")
         track_id = info.get("trackId")
         try:
@@ -236,6 +254,9 @@ class ZibalService:
                 message="شناسه تراکنش در پاسخ درگاه معتبر نیست.",
                 code=result,
             )
+            payment, pay_url = ZibalService._get_payment_result(payment.pk)
+            if payment.status == Payment.PaymentStatus.SUCCESS:
+                return payment, None
             raise ValidationError("شناسه تراکنش در پاسخ درگاه معتبر نیست.")
         payment = ZibalService._update_request_state(
             payment.pk,
@@ -244,6 +265,8 @@ class ZibalService:
             code=result,
             transaction_id=str(normalized_track_id),
         )
+        if payment.status == Payment.PaymentStatus.SUCCESS:
+            return payment, None
         return payment, f"{ZIBAL_START_URL}/{normalized_track_id}"
 
     @staticmethod
@@ -266,7 +289,7 @@ class ZibalService:
             "trackId": normalized_track_id,
         }
         try:
-            response = requests.post(f"{ZIBAL_API_URL}/verify", json=payload, timeout=10)
+            response = requests.post(ZIBAL_VERIFY_URL, json=payload, timeout=10)
             response.raise_for_status()
             data = response.json()
         except (requests.exceptions.RequestException, ValueError) as exc:
@@ -277,41 +300,43 @@ class ZibalService:
         if result is None:
             ZibalService._mark_payment_for_review(payment.pk, "پاسخ Verify فاقد کد وضعیت معتبر است.", code="invalid_response")
             raise ValidationError("پاسخ Verify معتبر نیست؛ بررسی مجدد لازم است.")
-        if result == 201:
-            ZibalService._mark_payment_for_review(
-                payment.pk,
-                message or "پرداخت قبلاً در زیبال تأیید شده؛ نتیجه Inquiry در حال بررسی است.",
-                code=201,
-            )
         if result in (201, 202):
-            inquiry_result, inquiry_message, inquiry_info = (
-                ZibalService.inquiry_payment(payment_id=payment.pk, track_id=normalized_track_id)
-            )
+            try:
+                inquiry_result, inquiry_message, inquiry_info = (
+                    ZibalService.inquiry_payment(
+                        payment_id=payment.pk,
+                        track_id=normalized_track_id,
+                    )
+                )
+            except ValidationError:
+                with transaction.atomic():
+                    locked = Payment.objects.select_for_update().get(pk=payment.pk)
+                    if locked.status != Payment.PaymentStatus.SUCCESS:
+                        locked.gateway_response_code = str(result)
+                        locked.save(update_fields=[
+                            "gateway_response_code",
+                            "updated_at",
+                        ])
+                raise
             if inquiry_result != 100:
                 return Payment.objects.get(pk=payment.pk)
             try:
                 inquiry_status = int(inquiry_info.get("status"))
             except (TypeError, ValueError):
                 inquiry_status = None
-
-            # Payment is confirmed by Zibal.
             if inquiry_status == 1:
+                # Inquiry confirms that the transaction is paid and verified.
                 info = inquiry_info
                 result = 100
-                message = inquiry_message
-
-            # Definitive user-cancelled or payment-failed statuses.
-            elif inquiry_status is not None and 3 <= inquiry_status <= 6:
+                message = inquiry_message or message
+            elif inquiry_status in (3, 4, 5, 6):
+                # Definitive unsuccessful transaction statuses.
                 with transaction.atomic():
                     locked = Payment.objects.select_for_update().get(pk=payment.pk)
-                    if locked.status == Payment.PaymentStatus.PENDING:
-                        locked.status = Payment.PaymentStatus.FAILED
                     if locked.status != Payment.PaymentStatus.SUCCESS:
+                        locked.status = Payment.PaymentStatus.FAILED
                         locked.gateway_response_code = f"s{inquiry_status}"
-                        locked.gateway_response_message = (
-                            inquiry_message or
-                            f"وضعیت نهایی تراکنش در زیبال: {inquiry_status}"
-                        )[:255]
+                        locked.gateway_response_message = (inquiry_message or f"تراکنش ناموفق است؛ وضعیت زیبال: {inquiry_status}")[:255]
                         locked.save(update_fields=[
                             "status",
                             "gateway_response_code",
@@ -319,16 +344,15 @@ class ZibalService:
                             "updated_at",
                         ])
                 return Payment.objects.get(pk=payment.pk)
-
-            # Pending, paid-unconfirmed, internal error, refund or unknown.
             else:
+                # Pending, paid but unverified, refunded, reversed,
+                # internal error, or unknown status.
                 ZibalService._mark_payment_for_review(
-                    payment.pk,
-                    f"وضعیت تراکنش در Inquiry نیازمند بررسی مجدد است: {inquiry_status}",
-                    code=f"s{inquiry_status}" if inquiry_status is not None else "inq",
+                    payment.pk,("وضعیت تراکنش در Inquiry نیازمند بررسی مجدد است: "f"{inquiry_status}"),
+                    code=(f"s{inquiry_status}" if inquiry_status is not None else "inq"),
                 )
                 return Payment.objects.get(pk=payment.pk)
-        if result != 100:
+        elif result != 100:
             ZibalService._mark_payment_for_review(payment.pk, message or "پاسخ Verify زیبال موفق نبود.", code=result)
             return Payment.objects.get(pk=payment.pk)
         try:
@@ -345,11 +369,12 @@ class ZibalService:
         except (TypeError, ValueError):
             verified_amount = None
         ref_number = info.get("refNumber")
-        expected_order_id = str(payment.order.order_number)
+        expected_order_id = str(payment.id)
         returned_order_id = str(info.get("orderId") or "")
         if (
             verified_amount != expected_amount
-            or not ref_number
+            or ref_number is None
+            or not str(ref_number).strip()
             or returned_order_id != expected_order_id
         ):
             ZibalService._mark_payment_for_review(
@@ -448,3 +473,12 @@ class ZibalService:
                         total_price=item.total_price,
                     )
         return payment
+
+    @staticmethod
+    def _get_payment_result(payment_id):
+        payment = Payment.objects.select_related("order").get(pk=payment_id)
+        if payment.status == Payment.PaymentStatus.SUCCESS:
+            ZibalService.complete_paid_payment(payment.pk)
+            payment.refresh_from_db()
+            return payment, None
+        return payment, None
