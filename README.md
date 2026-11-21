@@ -174,13 +174,13 @@ The REST API is organized into domain-focused Django applications and documented
 ```text
 /api/accounts/
 /api/catalog/
-/api/banners/
 /api/cart/
-/api/discounts/
 /api/orders/
+/api/discounts/
 /api/payments/
 /api/shipments/
 /api/invoices/
+/api/banners/
 ```
 
 The `discounts` application provides discount-related business logic within the project. It is not listed as a separate public API endpoint.
