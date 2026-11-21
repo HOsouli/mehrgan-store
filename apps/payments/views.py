@@ -80,7 +80,7 @@ class PaymentCallbackView(APIView):
             payment_uuid = UUID(payment_id)
         except (TypeError, ValueError):
             return redirect(failed_url)
-        if callback_order_id != str(payment_uuid):
+        if callback_order_id and callback_order_id != str(payment_uuid):
             logger.warning("Zibal callback orderId mismatch for payment %s", payment_uuid)
             return redirect(f"{result_url}?status=review&payment_id={payment_uuid}")
         if not track_id or not track_id.isdigit() or int(track_id) <= 0:

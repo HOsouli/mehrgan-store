@@ -76,15 +76,74 @@ class RequestPaymentTests(TestCase):
         self.assertEqual(pay_url, "https://gateway.zibal.ir/start/12345")
         post.assert_not_called()
 
+    @patch("apps.payments.services.settings.ZIBAL_MERCHANT_ID", "test-merchant")
+    @patch("apps.payments.services.requests.post")
+    def test_stale_pending_without_track_id_is_marked_unknown_and_replaced(self, post):
+        old_payment = Payment.objects.create(
+            order=self.order,
+            amount=self.order.total_amount,
+            gateway="zibal",
+            status=Payment.PaymentStatus.PENDING,
+            request_state=Payment.RequestState.SUBMITTING,
+        )
+        Payment.objects.filter(pk=old_payment.pk).update(created_at=timezone.now() - timedelta(minutes=3))
+        post.return_value.json.return_value = {"result": 100, "trackId": 777, "message": "Success"}
+        new_payment, pay_url = ZibalService.request_payment(self.order)
+        old_payment.refresh_from_db()
+        self.assertEqual(old_payment.status, Payment.PaymentStatus.FAILED)
+        self.assertEqual(old_payment.request_state, Payment.RequestState.UNKNOWN)
+        self.assertFalse(old_payment.transaction_id)
+        self.assertNotEqual(new_payment.pk, old_payment.pk)
+        self.assertEqual(new_payment.status, Payment.PaymentStatus.PENDING)
+        self.assertEqual(new_payment.request_state, Payment.RequestState.ACCEPTED)
+        self.assertEqual(new_payment.transaction_id, "777")
+        self.assertEqual(pay_url, "https://gateway.zibal.ir/start/777")
+        self.assertEqual(Payment.objects.filter(order=self.order).count(), 2)
+        post.assert_called_once()
+
+    @patch("apps.payments.services.requests.post")
+    def test_recent_submitting_payment_blocks_new_request(self, post):
+        old_payment = Payment.objects.create(
+            order=self.order,
+            amount=self.order.total_amount,
+            gateway="zibal",
+            status=Payment.PaymentStatus.PENDING,
+            request_state=Payment.RequestState.SUBMITTING,
+        )
+        Payment.objects.filter(pk=old_payment.pk).update(created_at=timezone.now() - timedelta(seconds=30))
+        with self.assertRaises(ValidationError):
+            ZibalService.request_payment(self.order)
+        old_payment.refresh_from_db()
+        self.assertEqual(old_payment.status, Payment.PaymentStatus.PENDING)
+        self.assertEqual(old_payment.request_state, Payment.RequestState.SUBMITTING)
+        self.assertFalse(old_payment.transaction_id)
+        self.assertEqual(Payment.objects.filter(order=self.order).count(), 1)
+        post.assert_not_called()
+
     @patch("apps.payments.services.requests.post", side_effect=requests.exceptions.Timeout)
-    def test_network_error_keeps_payment_pending(self, post):
+    def test_network_error_marks_payment_failed(self, post):
         with self.assertRaises(ValidationError):
             ZibalService.request_payment(self.order)
         payment = Payment.objects.get(order=self.order)
-        self.assertEqual(payment.status, Payment.PaymentStatus.PENDING)
+        self.assertEqual(payment.status, Payment.PaymentStatus.FAILED)
+        self.assertEqual(payment.request_state, Payment.RequestState.UNKNOWN)
         self.assertEqual(payment.gateway, "zibal")
         self.assertFalse(payment.transaction_id)
         self.assertTrue(payment.gateway_response_message)
+
+    @patch("apps.payments.services.requests.post")
+    def test_retry_after_timeout_creates_new_payment(self, post):
+        post.side_effect = [
+            requests.exceptions.Timeout,
+            MagicMock(json=lambda: {"result": 100, "trackId": 777, "message": "Success"}),
+        ]
+        with self.assertRaises(ValidationError):
+            ZibalService.request_payment(self.order)
+        payment, pay_url = ZibalService.request_payment(self.order)
+        self.assertEqual(payment.transaction_id, "777")
+        self.assertEqual(payment.status, Payment.PaymentStatus.PENDING)
+        self.assertEqual(pay_url, "https://gateway.zibal.ir/start/777")
+        self.assertEqual(Payment.objects.filter(order=self.order).count(), 2)
 
     @patch("apps.payments.services.settings.ZIBAL_MERCHANT_ID", "test-merchant")
     @patch("apps.payments.services.requests.post")
@@ -93,10 +152,11 @@ class RequestPaymentTests(TestCase):
         with self.assertRaises(ValidationError):
             ZibalService.request_payment(self.order)
         payment = Payment.objects.get(order=self.order)
-        self.assertEqual(payment.status, Payment.PaymentStatus.PENDING)
+        self.assertEqual(payment.status, Payment.PaymentStatus.FAILED)
+        self.assertEqual(payment.request_state, Payment.RequestState.UNKNOWN)
         self.assertEqual(payment.gateway_response_code, "100")
         self.assertFalse(payment.transaction_id)
-    @patch("apps.payments.services.settings.ZIBAL_MERCHANT_ID", "test-merchant")
+
     @patch("apps.payments.services.requests.post")
     def test_gateway_rejection_marks_payment_failed(self, post):
         post.return_value.json.return_value = {"result": 102, "message": "Invalid merchant"}
@@ -218,6 +278,60 @@ class VerifyPaymentDatabaseTests(TestCase):
         self.assertEqual(self.payment.status, Payment.PaymentStatus.SUCCESS)
         self.assertEqual(self.payment.tracking_code, "REF_RETRY_123")
 
+    @patch("apps.payments.services.requests.post")
+    def test_result_202_with_inquiry_status_minus_one_keeps_payment_pending(self, mock_post):
+        Payment.objects.filter(pk=self.payment.pk).update(
+            status=Payment.PaymentStatus.PENDING,
+            track_id_issued_at=timezone.now() - timedelta(minutes=10),
+        )
+        verify_response = {"result": 202, "message": "Not paid"}
+        inquiry_response = {"result": 100, "status": -1, "message": "Waiting for payment"}
+        mock_post.side_effect = [MagicMock(status_code=200, json=lambda: verify_response), MagicMock(
+            status_code=200, json=lambda: inquiry_response
+            )
+        ]
+        ZibalService.verify_payment(self.payment.id, self.payment.transaction_id)
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.status, Payment.PaymentStatus.PENDING)
+
+    @patch("apps.payments.services.requests.post")
+    def test_expired_track_id_with_inquiry_status_minus_one_marks_payment_failed(self, post):
+        Payment.objects.filter(pk=self.payment.pk).update(
+            status=Payment.PaymentStatus.PENDING,
+            track_id_issued_at=timezone.now() - timedelta(minutes=31),
+        )
+        post.side_effect = [
+            MagicMock(status_code=200, json=lambda: {"result": 202, "message": "Not paid"}),
+            MagicMock(status_code=200, json=lambda: {"result": 100, "status": -1, "message": "Waiting for payment"}),
+        ]
+        result = ZibalService.verify_payment(self.payment.pk, self.payment.transaction_id)
+        self.assertEqual(result.status, Payment.PaymentStatus.FAILED)
+        self.assertEqual(result.gateway_response_code, "s-1")
+
+    @patch("apps.payments.services.requests.post")
+    def test_unknown_track_id_issue_time_with_status_minus_one_keeps_payment_pending(self, post):
+        Payment.objects.filter(pk=self.payment.pk).update(status=Payment.PaymentStatus.PENDING, track_id_issued_at=None)
+        post.side_effect = [
+            MagicMock(status_code=200, json=lambda: {"result": 202, "message": "Not paid"}),
+            MagicMock(status_code=200, json=lambda: {"result": 100, "status": -1, "message": "Waiting for payment"}),
+        ]
+        result = ZibalService.verify_payment(self.payment.pk, self.payment.transaction_id)
+        self.assertEqual(result.status, Payment.PaymentStatus.PENDING)
+
+    @patch("apps.payments.services.requests.post")
+    def test_cancelled_payment_with_expired_track_id_and_status_minus_one_stays_cancelled(self, post):
+        Payment.objects.filter(pk=self.payment.pk).update(
+            status=Payment.PaymentStatus.CANCELLED,
+            track_id_issued_at=timezone.now() - timedelta(minutes=31),
+        )
+        post.side_effect = [
+            MagicMock(status_code=200, json=lambda: {"result": 202, "message": "Not paid"}),
+            MagicMock(status_code=200, json=lambda: {"result": 100, "status": -1, "message": "Waiting for payment"}),
+        ]
+        result = ZibalService.verify_payment(self.payment.pk, self.payment.transaction_id)
+        self.assertEqual(result.status, Payment.PaymentStatus.CANCELLED)
+
+
 
 @override_settings(ZIBAL_MERCHANT_ID="test-merchant")
 class VerifyPaymentFailureAfterTests(TestCase):
@@ -242,22 +356,6 @@ class VerifyPaymentFailureAfterTests(TestCase):
     def age_payment(self, minutes):
         created_at = timezone.now() - timedelta(minutes=minutes)
         Payment.objects.filter(pk=self.payment.pk).update(created_at=created_at)
-
-    @patch("apps.payments.services.requests.post")
-    def test_result_202_with_inquiry_status_minus_one_keeps_payment_pending(self, mock_post):
-        verify_response = {"result": 202, "message": "Not paid"}
-        inquiry_response = {
-            "result": 100,
-            "status": -1,
-            "message": "Waiting for payment",
-        }
-        mock_post.side_effect = [MagicMock(status_code=200, json=lambda: verify_response), MagicMock(
-            status_code=200, json=lambda: inquiry_response
-            )
-        ]
-        ZibalService.verify_payment(self.payment.id, self.payment.transaction_id)
-        self.payment.refresh_from_db()
-        self.assertEqual(self.payment.status, Payment.PaymentStatus.PENDING)
 
     @patch("apps.payments.services.requests.post")
     def test_result_202_with_inquiry_status_three_marks_payment_failed(self, mock_post):
@@ -327,7 +425,7 @@ class VerifyPaymentFailureAfterTests(TestCase):
         ]
         result = ZibalService.verify_payment(self.payment.pk, self.payment.transaction_id)
         self.assertEqual(result.status, Payment.PaymentStatus.CANCELLED)
-        self.assertEqual(result.gateway_response_code, "s-1")
+        self.assertEqual(result.gateway_response_code, "")
 
     @patch("apps.payments.services.requests.post")
     def test_result_202_with_inquiry_status_two_keeps_payment_pending(self, post):
@@ -392,7 +490,6 @@ class VerifyPaymentFailureAfterTests(TestCase):
         self.assertTrue(Invoice.objects.filter(order=self.order).exists())
         self.assertTrue(Shipment.objects.filter(order=self.order).exists())
 
-
     @patch("apps.payments.services.requests.post")
     def test_invalid_payment_details_require_review(self, post):
         invalid_responses = [
@@ -412,7 +509,6 @@ class VerifyPaymentFailureAfterTests(TestCase):
                 "refNumber": "",
             },
         ]
-
         for details in invalid_responses:
             with self.subTest(details=details):
                 post.return_value = MagicMock(
@@ -427,13 +523,11 @@ class VerifyPaymentFailureAfterTests(TestCase):
                         "message": "Success",
                     },
                 )
-
                 with self.assertRaises(ValidationError):
                     ZibalService.verify_payment(
                         self.payment.pk,
                         self.payment.transaction_id,
                     )
-
                 self.payment.refresh_from_db()
                 self.assertEqual(
                     self.payment.status,
@@ -766,14 +860,16 @@ class PaymentRecoveryTaskTests(TestCase):
             reverify_pending_payments()
 
     @patch("apps.payments.tasks.cache.add", return_value=True)
-    def test_previously_verified_payment_is_reported_for_manual_review(self, add):
+    @patch("apps.payments.services.requests.post", side_effect=requests.exceptions.ConnectionError)
+    def test_previously_verified_payment_is_reported_for_manual_review(self, post, add):
         Payment.objects.filter(pk=self.payment.pk).update(status=Payment.PaymentStatus.CANCELLED, gateway_response_code="201")
         with self.assertLogs("apps.payments.tasks", level="ERROR") as logs:
             reverify_pending_payments()
         self.assertTrue(any("قبلاً در زیبال تأیید شده" in line for line in logs.output))
 
     @patch("apps.payments.tasks.cache.add", return_value=True)
-    def test_old_manual_review_cases_are_reported(self, add):
+    @patch("apps.payments.services.requests.post", side_effect=requests.exceptions.ConnectionError)
+    def test_old_manual_review_cases_are_reported(self, post, add):
         self.age(25 * 60)
         self.set_order_status(Order.OrderStatus.CANCELLED)
         old_paid_at = timezone.now() - timedelta(days=8)
@@ -861,14 +957,15 @@ class PaymentCallbackFlowTests(APITestCase):
         )
         self.callback_url = reverse("payments:callback")
 
-    def call_callback(self, track_id="123456", gateway_status="OK"):
+    def call_callback(self, track_id="123456", success="1", gateway_status="2"):
         return self.client.get(
             self.callback_url,
             {
                 "payment_id": str(self.payment.pk),
                 "trackId": track_id,
                 "orderId": str(self.payment.pk),
-                "Status": gateway_status,
+                "success": success,
+                "status": gateway_status,
             },
             secure=True,
         )
@@ -1002,7 +1099,7 @@ class PaymentCallbackFlowTests(APITestCase):
             "refNumber": "REF_NOK_PAID",
             "message": "Success",
         }
-        response = self.call_callback(gateway_status="NOK")
+        response = self.call_callback(success="0", gateway_status="3")
         self.assertIn("status=success", response.url)
         self.assertIn("tracking_code=REF_NOK_PAID", response.url)
         self.payment.refresh_from_db()

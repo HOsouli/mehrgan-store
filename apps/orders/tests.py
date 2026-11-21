@@ -9,6 +9,9 @@ from apps.catalog.models import Product, Category, Brand
 from apps.discounts.models import Discount, CouponUsage
 from django.test import override_settings
 from decimal import Decimal
+from unittest.mock import patch,MagicMock
+from apps.orders.models import OrderItem
+from apps.payments.services import ZibalService
 
 
 class CancelExpiredOrdersTests(TestCase):
@@ -25,10 +28,7 @@ class CancelExpiredOrdersTests(TestCase):
 
     def test_order_with_unresolved_payment_is_not_cancelled(self):
         order = self._expired_order()
-        Payment.objects.create(
-            order=order, amount=1000, gateway="zibal",
-            status=Payment.PaymentStatus.PENDING, transaction_id="A1",
-        )
+        Payment.objects.create(order=order, amount=1000, gateway="zibal", status=Payment.PaymentStatus.PENDING, transaction_id="A1")
         OrderService.cancel_expired_orders()
         order.refresh_from_db()
         self.assertEqual(order.status, Order.OrderStatus.PENDING)
@@ -39,7 +39,7 @@ class CancelExpiredOrdersTests(TestCase):
         order.refresh_from_db()
         self.assertEqual(order.status, Order.OrderStatus.CANCELLED)
 
-    def test_old_unresolved_payment_is_cancelled_with_order(self):
+    def test_old_unresolved_payment_blocks_order_cancellation(self):
         order = self._expired_order()
         payment = Payment.objects.create(
             order=order,
@@ -49,15 +49,12 @@ class CancelExpiredOrdersTests(TestCase):
             transaction_id="A2",
         )
         old_time = timezone.now() - timedelta(minutes=61)
-        Payment.objects.filter(pk=payment.pk).update(
-            created_at=old_time,
-            updated_at=old_time,
-        )
+        Payment.objects.filter(pk=payment.pk).update(created_at=old_time, updated_at=old_time)
         OrderService.cancel_expired_orders()
         order.refresh_from_db()
         payment.refresh_from_db()
-        self.assertEqual(order.status, Order.OrderStatus.CANCELLED)
-        self.assertEqual(payment.status, Payment.PaymentStatus.CANCELLED)
+        self.assertEqual(order.status, Order.OrderStatus.PENDING)
+        self.assertEqual(payment.status, Payment.PaymentStatus.PENDING)
 
     def test_order_with_successful_payment_is_not_cancelled(self):
         order = self._expired_order()
@@ -112,11 +109,7 @@ class CancelExpiredOrdersTests(TestCase):
             ends_at=now + timedelta(days=1),
             is_active=True,
         )
-        CouponUsage.objects.create(
-            user=self.user,
-            discount=discount,
-            order=order,
-        )
+        CouponUsage.objects.create(user=self.user, discount=discount, order=order)
         OrderService.cancel_expired_orders()
         self.assertFalse(CouponUsage.objects.filter(order=order).exists())
 
@@ -130,3 +123,63 @@ class CancelExpiredOrdersTests(TestCase):
         OrderService.cancel_expired_orders()
         order.refresh_from_db()
         self.assertEqual(order.status, Order.OrderStatus.PENDING)
+
+    @patch("apps.payments.services.requests.post")
+    def test_expired_unpaid_payment_allows_order_cancellation_and_stock_restoration(self, post):
+        category = Category.objects.create(name="تست")
+        brand = Brand.objects.create(name="برند تست")
+        product = Product.objects.create(
+            name="محصول تست",
+            price=1000,
+            stock=3,
+            category=category,
+            brand=brand,
+        )
+        order = self._expired_order()
+        product.stock = 1
+        product.save(update_fields=["stock"])
+        OrderItem.objects.create(
+            order=order,
+            product=product,
+            quantity=2,
+            unit_price=1000,
+            total_price=2000,
+        )
+        payment = Payment.objects.create(
+            order=order,
+            amount=1000,
+            gateway="zibal",
+            status=Payment.PaymentStatus.PENDING,
+            transaction_id="123456789",
+            track_id_issued_at=timezone.now() - timedelta(minutes=31),
+        )
+        post.side_effect = [
+            MagicMock(status_code=200, json=lambda: {"result": 202, "message": "Not paid"}),
+            MagicMock(status_code=200, json=lambda: {"result": 100, "status": -1, "message": "Waiting for payment"}),
+        ]
+        ZibalService.verify_payment(payment.pk, payment.transaction_id)
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, Payment.PaymentStatus.FAILED)
+        cancelled_count = OrderService.cancel_expired_orders()
+        order.refresh_from_db()
+        payment.refresh_from_db()
+        product.refresh_from_db()
+        self.assertEqual(cancelled_count, 1)
+        self.assertEqual(order.status, Order.OrderStatus.CANCELLED)
+        self.assertEqual(payment.status, Payment.PaymentStatus.FAILED)
+        self.assertEqual(product.stock, 3)
+
+    def test_unknown_failed_payment_blocks_order_cancellation(self):
+        order = self._expired_order()
+        payment = Payment.objects.create(
+            order=order,
+            amount=1000,
+            gateway="zibal",
+            status=Payment.PaymentStatus.FAILED,
+            request_state=Payment.RequestState.UNKNOWN,
+        )
+        OrderService.cancel_expired_orders()
+        order.refresh_from_db()
+        payment.refresh_from_db()
+        self.assertEqual(order.status, Order.OrderStatus.PENDING)
+        self.assertEqual(payment.status, Payment.PaymentStatus.FAILED)

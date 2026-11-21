@@ -29,6 +29,7 @@ class Payment(models.Model):
     tracking_code = models.CharField(max_length=100, blank=True, null=True, unique=True, verbose_name="کد رهگیری")
     gateway_response_code = models.CharField(max_length=30, blank=True, verbose_name="کد پاسخ درگاه")
     gateway_response_message = models.CharField(max_length=255, blank=True, verbose_name="پیام پاسخ درگاه")
+    track_id_issued_at = models.DateTimeField(null=True, blank=True, verbose_name="زمان صدور شناسه پیگیری")
     paid_at = models.DateTimeField(null=True, blank=True, verbose_name="زمان پرداخت")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="تاریخ ایجاد")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="تاریخ ویرایش")

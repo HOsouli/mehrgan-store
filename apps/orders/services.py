@@ -233,7 +233,12 @@ class OrderService:
 
     @staticmethod
     def _inflight_payments():
-        return Payment.objects.filter(status=Payment.PaymentStatus.PENDING)
+        return Payment.objects.filter(
+            Q(status=Payment.PaymentStatus.PENDING) | Q(
+                status=Payment.PaymentStatus.FAILED,
+                request_state=Payment.RequestState.UNKNOWN,
+            )
+        )
 
     @staticmethod
     def cancel_expired_orders(batch_size=200):

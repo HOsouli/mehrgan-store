@@ -63,7 +63,7 @@ class ZibalService:
             payment.save(update_fields=update_fields)
 
     @staticmethod
-    def _update_request_state(payment_id, request_state, message="", code="", status=None, transaction_id=None):
+    def _update_request_state(payment_id, request_state, message="", code="", status=None, transaction_id=None, track_id_issued_at=None):
         conflict = False
         with transaction.atomic():
             payment = Payment.objects.select_for_update().get(pk=payment_id)
@@ -74,6 +74,9 @@ class ZibalService:
                 payment.gateway_response_message = ("شناسه تراکنش پاسخ Request با شناسه ثبت‌شده مطابقت ندارد.")
                 payment.save(update_fields=["request_state", "gateway_response_code", "gateway_response_message", "updated_at"])
             elif payment.status == Payment.PaymentStatus.SUCCESS:
+                if track_id_issued_at and not payment.track_id_issued_at:
+                    payment.track_id_issued_at = track_id_issued_at
+                    payment.save(update_fields=["track_id_issued_at", "updated_at"])
                 return payment
             else:
                 update_fields = ["request_state", "updated_at"]
@@ -81,6 +84,9 @@ class ZibalService:
                 if transaction_id is not None:
                     payment.transaction_id = str(transaction_id)
                     update_fields.append("transaction_id")
+                if track_id_issued_at and not payment.track_id_issued_at:
+                    payment.track_id_issued_at = track_id_issued_at
+                    update_fields.append("track_id_issued_at")
                 if status is not None:
                     payment.status = status
                     update_fields.append("status")
@@ -154,9 +160,18 @@ class ZibalService:
             existing_pending = order.payments.filter(status=Payment.PaymentStatus.PENDING).first()
             if existing_pending:
                 if existing_pending.transaction_id:
-                    pay_url = f"{ZIBAL_START_URL}/{existing_pending.transaction_id}"
-                    return existing_pending, pay_url
-                raise ValidationError("درخواست پرداخت قبلی نتیجه مشخصی ندارد؛ امکان ثبت درخواست جدید وجود ندارد.")
+                    issued = existing_pending.track_id_issued_at or existing_pending.created_at
+                    if now - issued < timedelta(minutes=25):
+                        return existing_pending, f"{ZIBAL_START_URL}/{existing_pending.transaction_id}"
+                    raise ValidationError("مهلت لینک پرداخت قبلی تمام شده است؛ وضعیت تراکنش در حال بررسی است.")
+                if (
+                    existing_pending.request_state == Payment.RequestState.SUBMITTING
+                    and now - existing_pending.created_at < timedelta(minutes=2)
+                ):
+                    raise ValidationError("درخواست پرداخت قبلی هنوز در حال پردازش است.")
+                existing_pending.status = Payment.PaymentStatus.FAILED
+                existing_pending.request_state = Payment.RequestState.UNKNOWN
+                existing_pending.save(update_fields=["status", "request_state", "updated_at"])
             hard_limit = order.created_at + timedelta(hours=1)
             if order.expires_at < hard_limit:
                 new_expiry = min(
@@ -201,6 +216,7 @@ class ZibalService:
                 Payment.RequestState.UNKNOWN,
                 message="نتیجه درخواست پرداخت مشخص نیست؛ بررسی مجدد لازم است.",
                 code="req_unknown",
+                status=Payment.PaymentStatus.FAILED,
             )
             logger.warning("درخواست پرداخت %s نامشخص ماند: %s", payment.pk, exc)
             payment, pay_url = ZibalService._get_payment_result(payment.pk)
@@ -214,6 +230,7 @@ class ZibalService:
                 Payment.RequestState.UNKNOWN,
                 message="پاسخ درخواست پرداخت فاقد کد وضعیت معتبر است.",
                 code="req_unknown",
+                status=Payment.PaymentStatus.FAILED,
             )
             payment, pay_url = ZibalService._get_payment_result(payment.pk)
             if payment.status == Payment.PaymentStatus.SUCCESS:
@@ -237,6 +254,7 @@ class ZibalService:
                 Payment.RequestState.UNKNOWN,
                 message=message or "کد پاسخ درخواست پرداخت ناشناخته است.",
                 code=result,
+                status=Payment.PaymentStatus.FAILED,
             )
             payment, pay_url = ZibalService._get_payment_result(payment.pk)
             if payment.status == Payment.PaymentStatus.SUCCESS:
@@ -253,17 +271,20 @@ class ZibalService:
                 Payment.RequestState.UNKNOWN,
                 message="شناسه تراکنش در پاسخ درگاه معتبر نیست.",
                 code=result,
+                status=Payment.PaymentStatus.FAILED,
             )
             payment, pay_url = ZibalService._get_payment_result(payment.pk)
             if payment.status == Payment.PaymentStatus.SUCCESS:
                 return payment, None
             raise ValidationError("شناسه تراکنش در پاسخ درگاه معتبر نیست.")
+        track_id_issued_at = timezone.now()
         payment = ZibalService._update_request_state(
             payment.pk,
             Payment.RequestState.ACCEPTED,
             message=message,
             code=result,
             transaction_id=str(normalized_track_id),
+            track_id_issued_at=track_id_issued_at,
         )
         if payment.status == Payment.PaymentStatus.SUCCESS:
             return payment, None
@@ -344,6 +365,28 @@ class ZibalService:
                             "updated_at",
                         ])
                 return Payment.objects.get(pk=payment.pk)
+            elif inquiry_status == -1:
+                with transaction.atomic():
+                    locked = Payment.objects.select_for_update().get(pk=payment.pk)
+                    if locked.status == Payment.PaymentStatus.PENDING:
+                        track_id_expired = (
+                            locked.track_id_issued_at is not None
+                            and locked.track_id_issued_at
+                            <= timezone.now() - timedelta(minutes=30)
+                        )
+                        if track_id_expired:
+                            locked.status = Payment.PaymentStatus.FAILED
+                            locked.gateway_response_message = ("مهلت پرداخت تراکنش به پایان رسیده و پرداخت انجام نشده است.")
+                        else:
+                            locked.gateway_response_message = (inquiry_message or "تراکنش در انتظار پرداخت است.")
+                        locked.gateway_response_code = "s-1"
+                        locked.save(update_fields=[
+                            "status",
+                            "gateway_response_code",
+                            "gateway_response_message",
+                            "updated_at",
+                        ])
+                return Payment.objects.get(pk=payment.pk)
             else:
                 # Pending, paid but unverified, refunded, reversed,
                 # internal error, or unknown status.
@@ -385,8 +428,7 @@ class ZibalService:
         paid_at = parse_datetime(str(info.get("paidAt") or ""))
         if paid_at is None:
             ZibalService._mark_payment_for_review(
-                payment.pk,
-                "زمان پرداخت در پاسخ درگاه معتبر نیست؛ تطبیق مالی لازم است.",
+                payment.pk,"زمان پرداخت در پاسخ درگاه معتبر نیست؛ تطبیق مالی لازم است.",
                 code=result,
             )
             raise ValidationError("زمان پرداخت در پاسخ درگاه معتبر نیست.")
