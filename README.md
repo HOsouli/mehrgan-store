@@ -22,7 +22,7 @@ The backend provides secure authentication, catalog management, server-side cart
 
 ## Architecture
 
-The project is organized into domain-focused Django applications:
+The project is organized into nine domain-focused Django applications:
 
 ```text
 apps/
@@ -167,7 +167,9 @@ Critical business calculations and inventory rules are enforced server-side rath
 
 ## API
 
-The REST API is organized by domain and documented using OpenAPI.
+The REST API is organized into domain-focused Django applications and documented using OpenAPI.
+
+### API Endpoints
 
 ```text
 /api/accounts/
@@ -179,15 +181,19 @@ The REST API is organized by domain and documented using OpenAPI.
 /api/shipments/
 ```
 
+The `discounts` application provides discount-related business logic within the project. It is not listed as a separate public API endpoint.
+
+The `invoices` application is implemented as an internal domain and does not currently expose a dedicated public API endpoint.
+
 ### API Documentation
 
-Swagger UI:
+**Swagger UI**
 
 ```text
 /api/docs/
 ```
 
-OpenAPI schema:
+**OpenAPI Schema**
 
 ```text
 /api/schema/
