@@ -28,7 +28,7 @@ The project is organized into domain-focused Django applications:
 apps/
 ├── accounts/      # Authentication and users
 ├── catalog/       # Products, categories, brands and cars
-├── cart/          # Server-side shopping cart
+├── cart/          # Shopping cart
 ├── orders/        # Orders and checkout
 ├── discounts/     # Discounts and coupons
 ├── payments/      # Payment processing
