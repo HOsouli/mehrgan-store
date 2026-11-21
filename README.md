@@ -2,7 +2,7 @@
 
 Production-ready backend for **Mehrgan Pakhsh**, an online auto-parts store built with Django and Django REST Framework.
 
-The backend provides secure authentication, catalog management, server-side cart handling, transactional checkout, inventory consistency, discounts, payments, shipments, invoices, and background processing.
+The backend provides secure authentication, catalog management, server-side cart handling, transactional checkout, inventory consistency, discounts, payment processing, order tracking, shipment management, invoice management, and background processing.
 
 ## Tech Stack
 
@@ -16,7 +16,7 @@ The backend provides secure authentication, catalog management, server-side cart
 - Docker / Docker Compose
 - Nginx
 - Gunicorn
-- Zarinpal Payment Gateway
+- Zibal Payment Gateway
 - OpenAPI / Swagger
 - Git / GitHub
 
@@ -32,12 +32,14 @@ apps/
 ├── orders/        # Orders and checkout
 ├── discounts/     # Discounts and coupons
 ├── payments/      # Payment processing
-├── shipments/     # Shipment tracking
-├── invoices/      # Invoice domain
+├── shipments/     # Shipment management and tracking
+├── invoices/      # Internal invoice domain
 └── banners/       # Promotional content
 ```
 
 Business-critical operations are handled on the server through dedicated service logic where appropriate.
+
+The invoices domain is implemented internally and does not currently expose a dedicated public API endpoint.
 
 The project follows **YAGNI, separation of concerns, explicit business rules, and purposeful abstraction**.
 
@@ -87,6 +89,14 @@ The project follows **YAGNI, separation of concerns, explicit business rules, an
 - Atomic stock deduction
 - Automatic expiration of unpaid orders
 
+### Order Tracking
+
+- Customer-facing order tracking
+- Order status visibility in customer accounts
+- Access to order details
+- Shipment tracking information
+- Carrier tracking-code visibility
+
 ### Discounts
 
 - Percentage and fixed discounts
@@ -100,34 +110,44 @@ The project follows **YAGNI, separation of concerns, explicit business rules, an
 ### Payments
 
 - Payment records
-- Zarinpal integration
-- Payment request
-- Gateway callback
+- Zibal payment gateway integration
+- Payment request and gateway redirect
+- Gateway callback handling
 - Backend-authoritative payment amounts
-- Payment verification and status management
+- Payment verification and inquiry
+- Payment state management
+- Handling of uncertain payment outcomes
+- Protection against duplicate payment processing
+- Automated re-verification of unresolved payments
+- Handling of late payment confirmations
 
 ### Shipments & Invoices
 
-- Shipment management and tracking
-- Shipment status synchronization
-- Invoice generation and management
+- Shipment management
+- Shipment status management
+- Shipment tracking
+- Carrier tracking-code management
+- Customer access to shipment tracking information
+- Internal invoice generation and management
 - Order, shipment and invoice coordination
 
 ### Background Processing
 
-Celery and Redis handle asynchronous and scheduled operations such as automatic expiration and cancellation of unpaid orders.
+Celery and Redis handle asynchronous and scheduled operations such as automatic expiration and cancellation of unpaid orders, as well as periodic verification of unresolved payments.
 
 ```text
 Celery Beat
     ↓
-Expired Order Task
+Scheduled Payment Re-verification
     ↓
-Order Service
+Payment Inquiry
     ↓
-Transactional cancellation
+Payment Service
     ↓
-Inventory restoration
+Payment State Update
 ```
+
+Unpaid order expiration and cancellation are also handled through scheduled background tasks.
 
 ## Data Integrity
 
@@ -154,12 +174,9 @@ The REST API is organized by domain and documented using OpenAPI.
 /api/catalog/
 /api/banners/
 /api/cart/
-/api/discounts/
-/api/addresses/
 /api/orders/
 /api/payments/
 /api/shipments/
-/api/invoices/
 ```
 
 ### API Documentation
@@ -181,8 +198,6 @@ The API documentation provides a clear contract for frontend integration and tes
 ## Getting Started
 
 ### Prerequisites
-
-Make sure the following tools are installed:
 
 - Python
 - Docker
@@ -233,7 +248,8 @@ Configuration includes:
 - Redis connection
 - JWT configuration
 - OTP and SMS provider credentials
-- Payment gateway credentials
+- Zibal merchant credentials
+- Payment gateway configuration
 - Allowed hosts and trusted origins
 - External service configuration
 
@@ -253,6 +269,8 @@ Key security considerations include:
 - Backend-authoritative payment amounts
 - Transactional inventory management
 - Protection against duplicate payment processing
+- Payment verification through the gateway
+- Handling of uncertain payment outcomes
 - Environment-based secret management
 - HTTPS for production communication
 
@@ -279,35 +297,19 @@ The test suite covers critical business operations, including:
 - Order creation and inventory consistency
 - Transactional checkout
 - Discount validation
-- Payment processing
+- Payment processing and state management
+- Payment verification scenarios
 - Order expiration and inventory restoration
-- Shipment and invoice workflows
 
 Tests involving external services should use controlled test configurations rather than real production credentials.
 
 ## Production Infrastructure
 
-The application is deployed using Docker Compose on Ubuntu with:
+The application is deployed using Docker Compose with Nginx and Gunicorn.
 
-```text
-Internet
-   ↓
-Cloudflare
-   ↓
-Nginx
-   ↓
-Gunicorn / Django
-   ↓
-PostgreSQL
-   +
-Redis
-   ↓
-Celery Worker / Celery Beat
-```
+Production configuration, credentials, and server-specific files remain separate from the public source repository.
 
-The production environment uses HTTPS, isolated service containers, PostgreSQL, Redis, Celery workers, scheduled tasks, and Nginx as the reverse proxy.
-
-### Deployment & Operations
+## Deployment & Operations
 
 Useful operational commands:
 
@@ -326,7 +328,13 @@ docker compose logs -f web
 View Celery worker logs:
 
 ```bash
-docker compose logs -f celery
+docker compose logs -f celery_worker
+```
+
+View Celery Beat logs:
+
+```bash
+docker compose logs -f celery_beat
 ```
 
 Apply database migrations after deploying compatible application changes:
@@ -334,8 +342,6 @@ Apply database migrations after deploying compatible application changes:
 ```bash
 docker compose exec web python manage.py migrate
 ```
-
-Production configuration, credentials, and server-specific files must remain separate from the public source repository.
 
 ## Verification
 
@@ -349,11 +355,13 @@ The implemented system has been verified through:
 - Order creation and detail flows
 - Inventory deduction and locking
 - Discount validation
-- Payment request flow
-- Automatic order expiration
+- Payment-related automated tests
+- Database migrations
 - Celery worker and scheduled task execution
 - Production deployment smoke tests
-- Production API testing
+- Production HTTPS connectivity
+
+Real payment gateway transactions and complete end-to-end payment flows require separate production verification.
 
 ## Project Status
 
@@ -366,16 +374,28 @@ The implemented system has been verified through:
 - Transactional checkout
 - Inventory consistency
 - Order management
+- Customer-facing order tracking
+- Order status visibility in customer accounts
+- Shipment tracking and tracking-code visibility
 - Discount and coupon system
-- Zarinpal payment integration
+- Zibal payment integration
+- Payment verification and inquiry handling
+- Automated payment re-verification
 - Shipment API
-- Invoice domain
+- Internal invoice domain
 - Banner domain
 - Celery and Redis
 - Dockerized development and production environments
 - Nginx / Gunicorn production setup
 - OpenAPI / Swagger documentation
 - Production deployment
+
+### Pending Verification & Development
+
+- Real Zibal payment transaction
+- Complete frontend-to-gateway payment flow
+- End-to-end payment callback and result handling
+- Production payment failure and recovery scenarios
 
 ## Development Philosophy
 
